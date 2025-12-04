@@ -1,0 +1,45 @@
+# Data-Fetch Framework Dependencies
+# Python 3.9+ required
+
+# Browser automation (for dynamic pages)
+playwright>=1.40.0
+
+# Data manipulation
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Excel export
+openpyxl>=3.1.0
+
+# HTML parsing
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# HTTP requests
+requests>=2.31.0
+urllib3>=2.0.0
+
+# Configuration
+pyyaml>=6.0.0
+python-dotenv>=1.0.0
+
+# Domain parsing
+tldextract>=5.1.0
+
+# LLM integration (for dynamic URL detection)
+openai>=1.0.0
+
+# CLI framework
+click>=8.1.0
+rich>=13.0.0
+
+# Date parsing
+python-dateutil>=2.8.0
+
+# Testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+
+# Type hints
+typing-extensions>=4.0.0
+

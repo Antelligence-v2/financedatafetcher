@@ -1,0 +1,162 @@
+# Data-Fetch Website Configurations
+# This file contains configurations for websites that have been set up for data extraction.
+
+sites:
+  # The Block - BTC and ETH Total Exchange Volume (7DMA)
+  - id: theblock_btc_eth_volume_7dma
+    name: "The Block - BTC/ETH Exchange Volume 7DMA"
+    base_url: "https://www.theblock.co"
+    page_url: "https://www.theblock.co/data/crypto-markets/spot/btc-and-eth-total-exchange-volume-7dma"
+    extraction_strategy: "api_json"
+    data_source:
+      type: "api"
+      endpoint: "https://www.theblock.co/api/charts/chart/crypto-markets/spot/btc-and-eth-total-exchange-volume-7dma"
+      method: "GET"
+      requires_auth: false
+      headers: {}
+    field_mappings:
+      date: "Date"
+      btc_volume_7dma: "BTC"
+      eth_volume_7dma: "ETH"
+    robots_policy:
+      status: "UNKNOWN"
+      last_checked: null
+      override_approved: false
+    metadata:
+      created: "2024-01-15T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+    rate_limit: 2.0  # seconds between requests
+
+  # CoinGecko - Exchange Volume (Public API)
+  - id: coingecko_exchange_volume
+    name: "CoinGecko - Exchange Volume"
+    base_url: "https://api.coingecko.com"
+    page_url: "https://api.coingecko.com/api/v3/exchanges"
+    extraction_strategy: "api_json"
+    data_source:
+      type: "api"
+      endpoint: "https://api.coingecko.com/api/v3/exchanges"
+      method: "GET"
+      requires_auth: false
+      headers:
+        Accept: "application/json"
+    field_mappings:
+      id: "id"
+      name: "name"
+      volume_24h: "trade_volume_24h_btc"
+    robots_policy:
+      status: "ALLOWED"
+      last_checked: "2024-01-15T00:00:00Z"
+      override_approved: false
+    metadata:
+      created: "2024-01-15T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+    rate_limit: 1.0
+
+  # CoinGecko - Simple Price (Current Prices) - Best for latest prices
+  - id: coingecko_simple_price
+    name: "CoinGecko - Simple Price (Current)"
+    base_url: "https://api.coingecko.com"
+    page_url: "https://api.coingecko.com/api/v3/simple/price"
+    extraction_strategy: "api_json"
+    data_source:
+      type: "api"
+      endpoint: "https://api.coingecko.com/api/v3/simple/price?vs_currencies=usd&ids=bitcoin,ethereum"
+      method: "GET"
+      requires_auth: false
+      headers:
+        Accept: "application/json"
+    field_mappings:
+      coin_id: "coin_id"
+      price_usd: "usd"
+    robots_policy:
+      status: "ALLOWED"
+      last_checked: "2024-12-04T00:00:00Z"
+      override_approved: false
+    metadata:
+      created: "2024-12-04T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+    rate_limit: 1.0
+
+  # CoinGecko - BTC Market Chart (Historical Data)
+  - id: coingecko_btc_market_chart
+    name: "CoinGecko - BTC Market Chart"
+    base_url: "https://api.coingecko.com"
+    page_url: "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
+    extraction_strategy: "api_json"
+    data_source:
+      type: "api"
+      endpoint: "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=30"
+      method: "GET"
+      requires_auth: false
+      headers:
+        Accept: "application/json"
+    field_mappings:
+      prices: "prices"
+      market_caps: "market_caps"
+      total_volumes: "total_volumes"
+    robots_policy:
+      status: "ALLOWED"
+      last_checked: "2024-12-04T00:00:00Z"
+      override_approved: false
+    metadata:
+      created: "2024-12-04T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+    rate_limit: 1.0
+
+  # CoinDesk Data API - BTC Price History (formerly CryptoCompare)
+  - id: coindesk_btc_price_history
+    name: "CoinDesk - BTC Price History"
+    base_url: "https://api.coindesk.com"
+    page_url: "https://api.coindesk.com/v1/bpi/historical/close.json"
+    extraction_strategy: "api_json"
+    data_source:
+      type: "api"
+      endpoint: "https://api.coindesk.com/v1/bpi/historical/close.json?currency=USD&start=2024-01-01&end=2024-12-31"
+      method: "GET"
+      requires_auth: false
+      headers:
+        Accept: "application/json"
+    field_mappings:
+      date: "date"
+      price: "price"
+    robots_policy:
+      status: "ALLOWED"
+      last_checked: "2024-12-04T00:00:00Z"
+      override_approved: false
+    metadata:
+      created: "2024-12-04T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+    rate_limit: 1.0
+
+  # Legacy CryptoCompare - Daily Exchange Volume (deprecated, use CoinDesk)
+  - id: cryptocompare_exchange_volume
+    name: "CryptoCompare - Daily Exchange Volume (Legacy)"
+    base_url: "https://min-api.cryptocompare.com"
+    page_url: "https://min-api.cryptocompare.com/data/exchange/histoday"
+    extraction_strategy: "api_json"
+    data_source:
+      type: "api"
+      endpoint: "https://min-api.cryptocompare.com/data/exchange/histoday?tsym=USD&limit=30"
+      method: "GET"
+      requires_auth: false
+      headers:
+        Accept: "application/json"
+    field_mappings:
+      date: "time"
+      volume: "volume"
+    robots_policy:
+      status: "ALLOWED"
+      last_checked: "2024-01-15T00:00:00Z"
+      override_approved: false
+    metadata:
+      created: "2024-01-15T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+    rate_limit: 0.5
+
