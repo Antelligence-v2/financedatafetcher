@@ -55,32 +55,6 @@ sites:
       last_successful_extraction: null
     rate_limit: 1.0
 
-  # CoinGecko - Simple Price (Current Prices) - Best for latest prices
-  - id: coingecko_simple_price
-    name: "CoinGecko - Simple Price (Current)"
-    base_url: "https://api.coingecko.com"
-    page_url: "https://api.coingecko.com/api/v3/simple/price"
-    extraction_strategy: "api_json"
-    data_source:
-      type: "api"
-      endpoint: "https://api.coingecko.com/api/v3/simple/price?vs_currencies=usd&ids=bitcoin,ethereum"
-      method: "GET"
-      requires_auth: false
-      headers:
-        Accept: "application/json"
-    field_mappings:
-      coin_id: "coin_id"
-      price_usd: "usd"
-    robots_policy:
-      status: "ALLOWED"
-      last_checked: "2024-12-04T00:00:00Z"
-      override_approved: false
-    metadata:
-      created: "2024-12-04T00:00:00Z"
-      created_by: "manual"
-      last_successful_extraction: null
-    rate_limit: 1.0
-
   # CoinGecko - BTC Market Chart (Historical Data)
   - id: coingecko_btc_market_chart
     name: "CoinGecko - BTC Market Chart"
@@ -98,33 +72,6 @@ sites:
       prices: "prices"
       market_caps: "market_caps"
       total_volumes: "total_volumes"
-    robots_policy:
-      status: "ALLOWED"
-      last_checked: "2024-12-04T00:00:00Z"
-      override_approved: false
-    metadata:
-      created: "2024-12-04T00:00:00Z"
-      created_by: "manual"
-      last_successful_extraction: null
-    rate_limit: 1.0
-
-  # CoinDesk Data API - BTC Price History (formerly CryptoCompare)
-  - id: coindesk_btc_price_history
-    name: "CoinDesk - BTC Price History"
-    base_url: "https://api.coindesk.com"
-    page_url: "https://api.coindesk.com/v1/bpi/historical/close.json"
-    extraction_strategy: "api_json"
-    data_source:
-      type: "api"
-      # Dates will be automatically updated to last 30 days by the scraper
-      endpoint: "https://api.coindesk.com/v1/bpi/historical/close.json?currency=USD&start=2024-01-01&end=2024-12-31"
-      method: "GET"
-      requires_auth: false
-      headers:
-        Accept: "application/json"
-    field_mappings:
-      date: "date"
-      price: "price"
     robots_policy:
       status: "ALLOWED"
       last_checked: "2024-12-04T00:00:00Z"
