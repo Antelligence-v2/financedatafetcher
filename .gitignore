@@ -27,6 +27,9 @@ Thumbs.db
 
 # n8n data (if not using volumes)
 .n8n/
+data-fetch/DEPLOYMENT.md
+
+
 
 
 
