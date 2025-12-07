@@ -122,7 +122,36 @@ class BrowserManager:
         if self.proxy:
             launch_options["proxy"] = {"server": self.proxy}
         
-        self._browser = await self._playwright.chromium.launch(**launch_options)
+        # Try to launch browser, and if browsers are missing, try to install them
+        try:
+            self._browser = await self._playwright.chromium.launch(**launch_options)
+        except Exception as e:
+            # If browser binaries are missing, try to install them
+            error_str = str(e).lower()
+            if any(keyword in error_str for keyword in ["executable doesn't exist", "browsertype.launch", "no such file", "cannot find"]):
+                self.logger.info("Playwright browsers not found. Attempting to install Chromium...")
+                try:
+                    import subprocess
+                    import sys
+                    result = subprocess.run(
+                        [sys.executable, "-m", "playwright", "install", "chromium"],
+                        capture_output=True,
+                        text=True,
+                        timeout=300
+                    )
+                    if result.returncode == 0:
+                        self.logger.info("Chromium installed successfully. Retrying browser launch...")
+                        self._browser = await self._playwright.chromium.launch(**launch_options)
+                    else:
+                        raise Exception(f"Failed to install Chromium: {result.stderr}")
+                except Exception as install_error:
+                    self.logger.error(f"Failed to auto-install browsers: {install_error}")
+                    raise ImportError(
+                        f"Playwright browsers are not installed. Auto-install failed: {install_error}. "
+                        "For Streamlit Cloud, add 'playwright install chromium' as a post-install command in Advanced Settings."
+                    )
+            else:
+                raise
         
         # Configure context with stealth options
         context_options = {}

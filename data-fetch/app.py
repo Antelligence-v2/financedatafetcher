@@ -70,7 +70,29 @@ def check_environment():
                 browser = p.chromium.launch(headless=True)
                 browser.close()
         except Exception as e:
-            warnings.append("⚠️ Playwright browsers may not be installed. Run: playwright install chromium")
+            # Try to auto-install browsers if missing (for Streamlit Cloud)
+            try:
+                import subprocess
+                import sys
+                # Install Chromium browser
+                result = subprocess.run(
+                    [sys.executable, "-m", "playwright", "install", "chromium"],
+                    capture_output=True,
+                    text=True,
+                    timeout=300  # 5 minute timeout
+                )
+                if result.returncode == 0:
+                    # Retry browser launch after installation
+                    try:
+                        with sync_playwright() as p:
+                            browser = p.chromium.launch(headless=True)
+                            browser.close()
+                    except Exception:
+                        warnings.append("⚠️ Playwright browsers installed but still not working. Browser automation may be disabled.")
+                else:
+                    warnings.append(f"⚠️ Failed to auto-install Playwright browsers: {result.stderr}")
+            except Exception as install_error:
+                warnings.append(f"⚠️ Playwright browsers may not be installed. Auto-install failed: {str(install_error)}")
     except ImportError:
         warnings.append("⚠️ Playwright not installed. Browser automation will not work.")
     except Exception as e:
