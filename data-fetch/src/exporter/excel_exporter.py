@@ -4,8 +4,10 @@ Exports DataFrames to Excel with optional metadata.
 """
 
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from datetime import datetime
+import io
+import tempfile
 
 import pandas as pd
 
@@ -92,6 +94,72 @@ class ExcelExporter:
         
         self.logger.info(f"Exported {len(df)} rows to {output_path}")
         return output_path
+    
+    def export_to_bytes(
+        self,
+        df: pd.DataFrame,
+        filename: Optional[str] = None,
+        site_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        sheet_name: str = "Data",
+    ) -> Tuple[bytes, str]:
+        """
+        Export a DataFrame to Excel in memory (for cloud/streamlit use).
+        
+        Args:
+            df: DataFrame to export
+            filename: Output filename (auto-generated if not provided)
+            site_id: Site identifier for organizing files
+            metadata: Additional metadata to include
+            sheet_name: Name of the main data sheet
+        
+        Returns:
+            Tuple of (excel_bytes, filename)
+        """
+        # Generate filename if not provided
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            site_part = f"{site_id}_" if site_id else ""
+            filename = f"{site_part}data_{timestamp}.xlsx"
+        
+        # Ensure .xlsx extension
+        if not filename.endswith(".xlsx"):
+            filename += ".xlsx"
+        
+        # Use temporary file or BytesIO for cloud environments
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp_file:
+            tmp_path = Path(tmp_file.name)
+        
+        try:
+            # Create Excel writer
+            with pd.ExcelWriter(tmp_path, engine="openpyxl") as writer:
+                # Write main data sheet
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+                
+                # Format the worksheet
+                worksheet = writer.sheets[sheet_name]
+                self._format_worksheet(worksheet, df)
+                
+                # Write metadata sheet if requested
+                if self.include_metadata:
+                    meta_df = self._create_metadata_df(df, metadata, site_id)
+                    meta_df.to_excel(writer, sheet_name="Metadata", index=False)
+            
+            # Read file as bytes
+            with open(tmp_path, "rb") as f:
+                excel_bytes = f.read()
+            
+            # Clean up temp file
+            tmp_path.unlink()
+            
+            self.logger.info(f"Exported {len(df)} rows to memory ({len(excel_bytes)} bytes)")
+            return excel_bytes, filename
+            
+        except Exception as e:
+            # Clean up on error
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise e
     
     def export_multiple(
         self,

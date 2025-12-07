@@ -55,7 +55,8 @@ class PipelineRunner:
         """
         self.config_manager = config_manager or ConfigManager()
         self.scrapers = scrapers or {}
-        self.validator = validator or DataValidator()
+        # Create validator that doesn't require date column (for non-time-series data)
+        self.validator = validator or DataValidator(require_date_column=False)
         self.exporter = exporter or ExcelExporter()
         self.logger = get_logger()
     
@@ -198,7 +199,9 @@ class PipelineRunner:
         elif site_id == "_universal":
             # Use universal scraper
             from ..scraper.universal_scraper import UniversalScraper
-            scraper = UniversalScraper()
+            import os
+            use_stealth = os.getenv("USE_STEALTH_MODE", "true").lower() in ("true", "1", "yes")
+            scraper = UniversalScraper(use_stealth=use_stealth)
         else:
             # Try to create from config
             config = self.config_manager.get(site_id)
@@ -213,10 +216,16 @@ class PipelineRunner:
                 elif site_id.startswith("coindesk") or site_id.startswith("cryptocompare"):
                     from ..scraper.fallback_scrapers import CryptoCompareScraper
                     scraper = CryptoCompareScraper(config=config)
+                elif site_id.startswith("alphavantage"):
+                    from ..scraper.fallback_scrapers import AlphaVantageScraper
+                    scraper = AlphaVantageScraper(config=config)
                 else:
                     # Fallback to universal scraper
                     from ..scraper.universal_scraper import UniversalScraper
-                    scraper = UniversalScraper(config=config)
+                    # Check if stealth mode should be enabled (from env or default True)
+                    import os
+                    use_stealth = os.getenv("USE_STEALTH_MODE", "true").lower() in ("true", "1", "yes")
+                    scraper = UniversalScraper(config=config, use_stealth=use_stealth)
             else:
                 return ScraperResult(
                     success=False,

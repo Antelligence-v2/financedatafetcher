@@ -13,6 +13,7 @@ from ..utils.logger import get_logger
 from ..utils.robots import check_robots_permission, RobotsDecision, RobotsStatus
 from ..utils.io_utils import save_raw_response, generate_run_id
 from ..utils.config_manager import SiteConfig
+from ..utils.auth_manager import AuthManager
 
 
 @dataclass
@@ -61,6 +62,7 @@ class BaseScraper(ABC):
         timeout: int = 30,
         max_retries: int = 3,
         retry_delay: float = 2.0,
+        auth_manager: Optional[AuthManager] = None,
     ):
         """
         Initialize the scraper.
@@ -71,6 +73,7 @@ class BaseScraper(ABC):
             timeout: Request timeout in seconds
             max_retries: Maximum retry attempts
             retry_delay: Base delay between retries (exponential backoff)
+            auth_manager: Authentication manager instance
         """
         self.config = config
         self.user_agent = user_agent
@@ -78,6 +81,12 @@ class BaseScraper(ABC):
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.logger = get_logger()
+        
+        self.auth_manager = auth_manager or AuthManager()
+        
+        # Load auth config if available
+        if config and config.auth_config:
+            self.auth_manager.load_auth_config(self.site_id, config.auth_config.__dict__)
         
         self._run_id: Optional[str] = None
         self._robots_decision: Optional[RobotsDecision] = None
@@ -191,9 +200,107 @@ class BaseScraper(ABC):
         
         return warnings
     
+    def _classify_error(self, error: Exception) -> str:
+        """
+        Classify an error to determine retry strategy.
+        
+        Args:
+            error: The exception that occurred
+        
+        Returns:
+            Error type: "network", "auth", "rate_limit", "bot_detection", "parsing", "unknown"
+        """
+        error_str = str(error).lower()
+        error_type = type(error).__name__
+        
+        # Network errors
+        if any(x in error_type for x in ["Connection", "Timeout", "HTTPError"]):
+            if "429" in error_str or "rate limit" in error_str:
+                return "rate_limit"
+            if "403" in error_str or "forbidden" in error_str:
+                return "bot_detection"
+            if "401" in error_str or "unauthorized" in error_str:
+                return "auth"
+            return "network"
+        
+        # Authentication errors
+        if "401" in error_str or "unauthorized" in error_str or "authentication" in error_str:
+            return "auth"
+        
+        # Rate limit errors
+        if "429" in error_str or "rate limit" in error_str or "too many requests" in error_str:
+            return "rate_limit"
+        
+        # Bot detection errors
+        if any(x in error_str for x in ["cloudflare", "captcha", "blocked", "403", "forbidden"]):
+            return "bot_detection"
+        
+        # Parsing errors
+        if any(x in error_type for x in ["JSONDecode", "ValueError", "KeyError", "AttributeError"]):
+            return "parsing"
+        
+        return "unknown"
+    
+    def get_auth_headers(self) -> Dict[str, str]:
+        """
+        Get authentication headers for requests.
+        
+        Returns:
+            Dictionary of authentication headers
+        """
+        if self.config and self.config.auth_config:
+            return self.auth_manager.get_auth_headers(self.site_id)
+        return {}
+    
+    def get_auth_cookies(self) -> List[Dict[str, Any]]:
+        """
+        Get authentication cookies for browser automation.
+        
+        Returns:
+            List of cookie dicts in Playwright format
+        """
+        if self.config and self.config.auth_config:
+            return self.auth_manager.get_cookies(self.site_id)
+        return []
+    
+    def _get_retry_delay(self, error_type: str, attempt: int) -> float:
+        """
+        Get retry delay based on error type and attempt number.
+        
+        Args:
+            error_type: Type of error ("network", "auth", "rate_limit", etc.)
+            attempt: Current attempt number (0-indexed)
+        
+        Returns:
+            Delay in seconds
+        """
+        import random
+        
+        base_delay = self.retry_delay
+        
+        if error_type == "rate_limit":
+            # Rate limit: longer delays, respect Retry-After if available
+            return base_delay * (3 ** attempt) + random.uniform(5, 15)
+        
+        elif error_type == "bot_detection":
+            # Bot detection: very long delays, exponential backoff
+            return base_delay * (4 ** attempt) + random.uniform(10, 30)
+        
+        elif error_type == "auth":
+            # Auth errors: moderate delays
+            return base_delay * (2 ** attempt) + random.uniform(2, 5)
+        
+        elif error_type == "network":
+            # Network errors: exponential backoff with jitter
+            return base_delay * (2 ** attempt) + random.uniform(0.5, 2.0)
+        
+        else:
+            # Default: exponential backoff
+            return base_delay * (2 ** attempt) + random.uniform(0.5, 1.5)
+    
     def _retry_operation(self, operation, *args, **kwargs):
         """
-        Execute an operation with retry logic.
+        Execute an operation with adaptive retry logic.
         
         Args:
             operation: Callable to execute
@@ -206,21 +313,41 @@ class BaseScraper(ABC):
             Last exception if all retries fail
         """
         last_error = None
+        last_error_type = None
         
         for attempt in range(self.max_retries):
             try:
                 return operation(*args, **kwargs)
             except Exception as e:
                 last_error = e
+                last_error_type = self._classify_error(e)
+                
                 if attempt < self.max_retries - 1:
-                    delay = self.retry_delay * (2 ** attempt)  # Exponential backoff
+                    delay = self._get_retry_delay(last_error_type, attempt)
+                    
                     self.logger.warning(
-                        f"Attempt {attempt + 1}/{self.max_retries} failed: {e}. "
+                        f"Attempt {attempt + 1}/{self.max_retries} failed ({last_error_type}): {e}. "
                         f"Retrying in {delay:.1f}s..."
                     )
+                    
                     time.sleep(delay)
+                    
+                    # For auth errors, try refreshing session
+                    if last_error_type == "auth" and attempt == 0:
+                        if self.config and self.config.auth_config:
+                            self.logger.info("Authentication error detected. Attempting to refresh session...")
+                            self.auth_manager.refresh_session(self.site_id)
+                    
+                    # For bot detection, suggest switching to stealth mode
+                    if last_error_type == "bot_detection" and attempt == 0:
+                        self.logger.info(
+                            "Bot detection detected. Consider enabling stealth mode or using a proxy."
+                        )
                 else:
-                    self.logger.error(f"All {self.max_retries} attempts failed")
+                    self.logger.error(
+                        f"All {self.max_retries} attempts failed. "
+                        f"Last error type: {last_error_type}"
+                    )
         
         raise last_error
     
@@ -286,7 +413,8 @@ class BaseScraper(ABC):
             self.logger.info("Parsing raw data...")
             df = self.parse_raw(raw_data)
             
-            if df is None or df.empty:
+            # Fix: Use proper pandas checks to avoid ambiguous truth value error
+            if df is None or (isinstance(df, pd.DataFrame) and df.empty):
                 result.error = "No data extracted"
                 return result
             

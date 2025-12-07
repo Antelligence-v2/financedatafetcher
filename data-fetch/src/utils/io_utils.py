@@ -9,13 +9,27 @@ from datetime import datetime
 from pathlib import Path
 from typing import Union, Optional, Any
 import os
+import tempfile
 
 
 # Base paths
 BASE_DIR = Path(__file__).parent.parent.parent
-OUTPUTS_DIR = BASE_DIR / "outputs"
-RAW_DIR = OUTPUTS_DIR / "raw"
-EXCEL_DIR = OUTPUTS_DIR / "excel"
+
+# Check if running in cloud environment (Streamlit Cloud, Heroku, etc.)
+# Use temp directory for outputs in cloud environments
+IS_CLOUD_ENV = os.getenv("STREAMLIT_SERVER_ENV") is not None or os.getenv("DYNO") is not None
+
+if IS_CLOUD_ENV:
+    # Use temp directory in cloud
+    OUTPUTS_DIR = Path(tempfile.gettempdir()) / "data-fetch" / "outputs"
+    RAW_DIR = OUTPUTS_DIR / "raw"
+    EXCEL_DIR = OUTPUTS_DIR / "excel"
+else:
+    # Use local outputs directory
+    OUTPUTS_DIR = BASE_DIR / "outputs"
+    RAW_DIR = OUTPUTS_DIR / "raw"
+    EXCEL_DIR = OUTPUTS_DIR / "excel"
+
 CONFIG_DIR = BASE_DIR / "config"
 
 

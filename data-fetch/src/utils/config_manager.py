@@ -42,6 +42,19 @@ class SiteMetadata:
 
 
 @dataclass
+class AuthConfig:
+    """Authentication configuration for a site."""
+    auth_type: str = "none"  # "none", "api_key", "cookies", "session", "oauth"
+    api_key: Optional[str] = None
+    api_key_env: Optional[str] = None  # Environment variable name for API key
+    api_key_header: str = "Authorization"
+    api_key_format: str = "Bearer {key}"  # Format string
+    cookie_file: Optional[str] = None
+    session_cookies: Dict[str, str] = field(default_factory=dict)
+    session_timeout: int = 3600
+
+
+@dataclass
 class SiteConfig:
     """Configuration for a website."""
     id: str
@@ -54,10 +67,11 @@ class SiteConfig:
     robots_policy: RobotsPolicy = field(default_factory=lambda: RobotsPolicy(status="UNKNOWN"))
     metadata: SiteMetadata = field(default_factory=SiteMetadata)
     rate_limit: Optional[float] = None  # Seconds between requests
+    auth_config: Optional[AuthConfig] = None
     
     def to_dict(self) -> dict:
         """Convert to dictionary for YAML serialization."""
-        return {
+        result = {
             "id": self.id,
             "name": self.name,
             "base_url": self.base_url,
@@ -69,6 +83,9 @@ class SiteConfig:
             "metadata": asdict(self.metadata),
             "rate_limit": self.rate_limit,
         }
+        if self.auth_config:
+            result["auth_config"] = asdict(self.auth_config)
+        return result
     
     @classmethod
     def from_dict(cls, data: dict) -> "SiteConfig":
@@ -77,6 +94,9 @@ class SiteConfig:
         data_source = DataSource(**data.get("data_source", {}))
         robots_policy = RobotsPolicy(**data.get("robots_policy", {"status": "UNKNOWN"}))
         metadata = SiteMetadata(**data.get("metadata", {}))
+        auth_config = None
+        if "auth_config" in data:
+            auth_config = AuthConfig(**data.get("auth_config", {}))
         
         return cls(
             id=data["id"],
@@ -89,6 +109,7 @@ class SiteConfig:
             robots_policy=robots_policy,
             metadata=metadata,
             rate_limit=data.get("rate_limit"),
+            auth_config=auth_config,
         )
 
 

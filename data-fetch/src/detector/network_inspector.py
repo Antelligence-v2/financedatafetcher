@@ -39,8 +39,8 @@ class NetworkInspector:
     # Keywords that suggest data endpoints
     DATA_KEYWORDS = [
         "api", "chart", "data", "series", "history", "export",
-        "json", "csv", "stats", "metrics", "prices", "volume",
-        "market", "ticker", "quote", "ohlc", "candle",
+        "json", "csv", "xml", "stats", "metrics", "prices", "volume",
+        "market", "ticker", "quote", "ohlc", "candle", "timeseries",
     ]
     
     # Keywords that suggest tracking/analytics (to filter out)
@@ -77,8 +77,9 @@ class NetworkInspector:
             if request.status != 200:
                 continue
             
-            # Skip non-data content types
-            if not request.is_json and not request.is_csv:
+            # Skip non-data content types (JSON, CSV, XML)
+            if not (request.is_json or request.is_csv or 
+                    (request.content_type and "xml" in request.content_type.lower())):
                 continue
             
             # Calculate confidence score
@@ -143,6 +144,8 @@ class NetworkInspector:
             score += 1.0
         elif request.is_csv:
             score += 1.5  # CSV is often cleaner data
+        elif request.content_type and "xml" in request.content_type.lower():
+            score += 1.2  # XML data endpoints
         
         # Same domain bonus
         if target_domain:

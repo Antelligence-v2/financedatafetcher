@@ -5,8 +5,11 @@ Normalizes JSON timeseries data into DataFrames.
 
 import json
 import re
+import html
 from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
+from dateutil import parser as date_parser
+from dateutil.tz import UTC
 
 import pandas as pd
 
@@ -27,20 +30,58 @@ class JsonExtractor:
         data: Union[str, bytes, dict, list],
         data_path: Optional[str] = None,
         field_mappings: Optional[Dict[str, str]] = None,
+        detect_ndjson: bool = True,
     ) -> pd.DataFrame:
         """
         Extract data from JSON and return as DataFrame.
         
         Args:
             data: JSON data (string, bytes, dict, or list)
-            data_path: JSONPath-like path to the data array (e.g., "data.chart.series")
+            data_path: JSONPath-like path to the data array (e.g., "data.chart.series[0].price")
             field_mappings: Optional mapping from JSON fields to output columns
+            detect_ndjson: Whether to detect and parse NDJSON (newline-delimited JSON)
         
         Returns:
             Extracted DataFrame
         """
-        # Parse JSON if needed
-        if isinstance(data, (str, bytes)):
+        # Check for NDJSON format first
+        if detect_ndjson and isinstance(data, (str, bytes)):
+            if isinstance(data, bytes):
+                data_str = data.decode("utf-8")
+            else:
+                data_str = data
+            
+            # Check if it's NDJSON (multiple JSON objects separated by newlines)
+            if "\n" in data_str and not data_str.strip().startswith("["):
+                lines = [line.strip() for line in data_str.split("\n") if line.strip()]
+                if len(lines) > 1:
+                    # Try to parse as NDJSON
+                    try:
+                        parsed_lines = []
+                        for line in lines:
+                            try:
+                                parsed_lines.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                continue
+                        
+                        if parsed_lines:
+                            self.logger.info(f"Detected NDJSON format with {len(parsed_lines)} lines")
+                            data = parsed_lines
+                        else:
+                            # Fall back to regular JSON parsing
+                            data = json.loads(data_str)
+                    except Exception:
+                        # Fall back to regular JSON parsing
+                        data = json.loads(data_str)
+                else:
+                    # Single line, parse as regular JSON
+                    data = json.loads(data_str)
+            else:
+                # Regular JSON
+                data = json.loads(data_str)
+        
+        # Parse JSON if still needed
+        elif isinstance(data, (str, bytes)):
             if isinstance(data, bytes):
                 data = data.decode("utf-8")
             data = json.loads(data)
@@ -51,6 +92,9 @@ class JsonExtractor:
         
         # Handle different data structures
         df = self._extract_data(data)
+        
+        # Clean embedded HTML/XML from text fields
+        df = self._clean_embedded_html(df)
         
         # Apply field mappings
         if field_mappings and not df.empty:
@@ -65,21 +109,24 @@ class JsonExtractor:
     def _navigate_path(self, data: Any, path: str) -> Any:
         """
         Navigate to a nested path in JSON data.
+        Supports array indexing (e.g., "data.items[0].price").
         
         Args:
             data: JSON data structure
-            path: Dot-separated path (e.g., "data.chart.series")
+            path: Dot-separated path (e.g., "data.chart.series[0].price")
         
         Returns:
             Data at the specified path
         """
-        parts = path.split(".")
+        # Split path handling array indices like [0]
+        parts = re.split(r'\.|\[|\]', path)
+        parts = [p for p in parts if p]  # Remove empty strings
         
         for part in parts:
             if not part:
                 continue
             
-            # Handle array index
+            # Handle array index (numeric or after [)
             if part.isdigit():
                 idx = int(part)
                 if isinstance(data, list) and idx < len(data):
@@ -91,6 +138,16 @@ class JsonExtractor:
                     data = data[part]
                 else:
                     raise KeyError(f"Key '{part}' not found in data")
+            elif isinstance(data, list):
+                # Try to access as array index
+                try:
+                    idx = int(part)
+                    if idx < len(data):
+                        data = data[idx]
+                    else:
+                        raise KeyError(f"Array index {idx} out of range")
+                except ValueError:
+                    raise KeyError(f"Cannot navigate '{part}' in list")
             else:
                 raise KeyError(f"Cannot navigate '{part}' in {type(data)}")
         
@@ -245,25 +302,93 @@ class JsonExtractor:
             r"^\d{4}-\d{2}-\d{2}",  # YYYY-MM-DD
             r"^\d{2}/\d{2}/\d{4}",  # MM/DD/YYYY
             r"^\d{10,13}$",  # Unix timestamp
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}",  # ISO 8601
+            r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}",  # SQL datetime
         ]
         
         return any(re.match(p, sample) for p in date_patterns)
     
     def _parse_dates(self, series: pd.Series) -> pd.Series:
-        """Parse various date formats."""
-        # Check for Unix timestamps
+        """
+        Parse various date formats including ISO 8601, Unix timestamps, and custom formats.
+        Supports timezone-aware parsing.
+        """
         sample = series.dropna().head(1)
-        if len(sample) > 0:
-            val = sample.iloc[0]
-            if isinstance(val, (int, float)) and val > 1e9:
-                # Unix timestamp (seconds or milliseconds)
-                if val > 1e12:
-                    return pd.to_datetime(series, unit="ms")
-                else:
-                    return pd.to_datetime(series, unit="s")
+        if len(sample) == 0:
+            return series
         
-        # Try standard date parsing
-        return pd.to_datetime(series, errors="coerce")
+        val = sample.iloc[0]
+        
+        # Check for Unix timestamps (numeric)
+        if isinstance(val, (int, float)) and val > 1e9:
+            # Unix timestamp (seconds or milliseconds)
+            if val > 1e12:
+                return pd.to_datetime(series, unit="ms", utc=True)
+            else:
+                return pd.to_datetime(series, unit="s", utc=True)
+        
+        # Check for string timestamps
+        if isinstance(val, str):
+            # Try ISO 8601 format (with timezone)
+            iso_pattern = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?$"
+            if re.match(iso_pattern, val):
+                try:
+                    return pd.to_datetime(series, utc=True)
+                except Exception:
+                    pass
+            
+            # Try dateutil parser (handles many formats including timezone)
+            try:
+                parsed = series.apply(lambda x: date_parser.parse(str(x)) if pd.notna(x) else None)
+                return pd.Series(parsed, dtype="datetime64[ns, UTC]")
+            except Exception:
+                pass
+        
+        # Try standard pandas date parsing
+        try:
+            return pd.to_datetime(series, errors="coerce", utc=True)
+        except Exception:
+            return series
+    
+    def _clean_embedded_html(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Clean embedded HTML/XML from text fields in DataFrame.
+        
+        Args:
+            df: DataFrame to clean
+        
+        Returns:
+            DataFrame with cleaned text fields
+        """
+        from bs4 import BeautifulSoup
+        
+        df = df.copy()
+        
+        for col in df.columns:
+            if df[col].dtype == object:
+                def clean_value(val):
+                    if pd.isna(val) or not isinstance(val, str):
+                        return val
+                    
+                    # Check if value contains HTML/XML tags
+                    if "<" in val and ">" in val:
+                        try:
+                            # Parse and extract text
+                            soup = BeautifulSoup(val, "html.parser")
+                            cleaned = soup.get_text(separator=" ", strip=True)
+                            # Also decode HTML entities
+                            cleaned = html.unescape(cleaned)
+                            return cleaned
+                        except Exception:
+                            # If parsing fails, just decode entities
+                            return html.unescape(val)
+                    
+                    # Decode HTML entities even if no tags
+                    return html.unescape(val)
+                
+                df[col] = df[col].apply(clean_value)
+        
+        return df
     
     def detect_structure(self, data: Union[str, bytes, dict, list]) -> Dict[str, Any]:
         """

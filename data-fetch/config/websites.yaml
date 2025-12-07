@@ -160,3 +160,62 @@ sites:
       last_successful_extraction: null
     rate_limit: 0.5
 
+  # Alpha Vantage - Company Overview
+  - id: alphavantage_company_overview
+    name: "Alpha Vantage - Company Overview"
+    base_url: "https://www.alphavantage.co"
+    page_url: "https://www.alphavantage.co/query?function=OVERVIEW&symbol=AAPL"
+    extraction_strategy: "api_json"
+    data_source:
+      type: "api"
+      endpoint: "https://www.alphavantage.co/query?function=OVERVIEW&symbol=AAPL"
+      method: "GET"
+      requires_auth: false
+      headers:
+        Accept: "application/json"
+    field_mappings:
+      Symbol: "Symbol"
+      Name: "Name"
+      MarketCapitalization: "MarketCapitalization"
+      Sector: "Sector"
+      Industry: "Industry"
+    robots_policy:
+      status: "ALLOWED"
+      last_checked: "2024-12-05T00:00:00Z"
+      override_approved: false
+    metadata:
+      created: "2024-12-05T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+    rate_limit: 12.0  # seconds between requests (5 calls/minute for free tier)
+
+  # Alpha Vantage - Top 20 Stocks by Market Cap
+  - id: alphavantage_top_20_stocks
+    name: "Alpha Vantage - Top 20 Stocks by Market Cap"
+    base_url: "https://www.alphavantage.co"
+    page_url: "https://www.alphavantage.co/query?function=OVERVIEW&symbol=AAPL"
+    extraction_strategy: "api_json"
+    data_source:
+      type: "api"
+      endpoint: "https://www.alphavantage.co/query?function=OVERVIEW"
+      method: "GET"
+      requires_auth: false
+      headers:
+        Accept: "application/json"
+    field_mappings:
+      Symbol: "Symbol"
+      Name: "Name"
+      MarketCapitalization: "MarketCapitalization"
+      Sector: "Sector"
+      Industry: "Industry"
+      Price: "52WeekHigh"
+    robots_policy:
+      status: "ALLOWED"
+      last_checked: "2024-12-05T00:00:00Z"
+      override_approved: false
+    metadata:
+      created: "2024-12-05T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+    rate_limit: 12.0  # seconds between requests (5 calls/minute for free tier)
+

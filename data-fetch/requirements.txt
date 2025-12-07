@@ -3,6 +3,8 @@
 
 # Browser automation (for dynamic pages)
 playwright>=1.40.0
+# Note: After installing, run: playwright install chromium
+# For Streamlit Cloud, browsers are installed during deployment
 
 # Data manipulation
 pandas>=2.0.0
@@ -42,4 +44,13 @@ pytest-asyncio>=0.21.0
 
 # Type hints
 typing-extensions>=4.0.0
+
+# XML parsing (for xml_extractor)
+# lxml is already listed above
+
+# Frontend (Streamlit)
+streamlit>=1.28.0
+
+# Note: playwright-stealth is optional and can be installed separately
+# if needed: pip install playwright-stealth
 

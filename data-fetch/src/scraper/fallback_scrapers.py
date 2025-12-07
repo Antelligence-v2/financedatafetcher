@@ -14,6 +14,7 @@ import pandas as pd
 from .base_scraper import BaseScraper, ScraperResult
 from ..utils.logger import get_logger
 from ..utils.config_manager import ConfigManager, SiteConfig
+from ..utils.io_utils import generate_run_id
 
 
 class CoinGeckoScraper(BaseScraper):
@@ -357,6 +358,373 @@ class CryptoCompareScraper(BaseScraper):
         return df
 
 
+class AlphaVantageScraper(BaseScraper):
+    """
+    Scraper for Alpha Vantage API.
+    Provides company overview and stock market data.
+    Supports free tier (5 calls/minute, 500/day).
+    """
+    
+    # Alpha Vantage API base URL
+    API_BASE = "https://www.alphavantage.co/query"
+    
+    # Top 20 stocks by market cap (predefined list)
+    TOP_20_STOCKS = [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK.B", 
+        "V", "UNH", "JNJ", "WMT", "XOM", "JPM", "MA", "PG", "HD", "CVX", 
+        "ABBV", "AVGO"
+    ]
+    
+    def __init__(
+        self,
+        config: Optional[SiteConfig] = None,
+        api_key: Optional[str] = None,
+        **kwargs
+    ):
+        """
+        Initialize Alpha Vantage scraper.
+        
+        Args:
+            config: Site configuration
+            api_key: Optional API key (auto-loaded from env if not provided)
+        """
+        super().__init__(config=config, **kwargs)
+        
+        # Try to get API key from parameter, env var, or Streamlit secrets
+        if api_key:
+            self.api_key = api_key
+        else:
+            self.api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
+            
+            # Try Streamlit secrets if available (when running in Streamlit)
+            if not self.api_key:
+                try:
+                    import streamlit as st
+                    self.api_key = st.secrets.get("ALPHA_VANTAGE_API_KEY", None)
+                except (ImportError, AttributeError, FileNotFoundError, TypeError):
+                    # Streamlit not available or secrets not configured
+                    pass
+        
+        if not self.api_key:
+            self.logger.warning("ALPHA_VANTAGE_API_KEY not found in environment or Streamlit secrets")
+        
+        # Rate limiting (free tier: 5 calls/minute)
+        self._last_request_time: Optional[datetime] = None
+        self._min_request_interval = 12.0  # seconds (60/5 = 12 seconds between calls)
+        self._request_times: List[datetime] = []  # Track last 5 requests
+    
+    def _rate_limit(self):
+        """Apply rate limiting (5 calls per minute for free tier)."""
+        import time
+        now = datetime.now()
+        
+        # Remove requests older than 1 minute
+        self._request_times = [
+            req_time for req_time in self._request_times
+            if (now - req_time).total_seconds() < 60
+        ]
+        
+        # If we have 5 requests in the last minute, wait
+        if len(self._request_times) >= 5:
+            # Wait until the oldest request is more than 1 minute old
+            oldest_request = min(self._request_times)
+            wait_time = 60 - (now - oldest_request).total_seconds() + 1
+            if wait_time > 0:
+                self.logger.info(f"Rate limit: waiting {wait_time:.1f} seconds...")
+                time.sleep(wait_time)
+                # Clean up again after waiting
+                now = datetime.now()
+                self._request_times = [
+                    req_time for req_time in self._request_times
+                    if (now - req_time).total_seconds() < 60
+                ]
+        
+        # Record this request
+        self._request_times.append(datetime.now())
+        self._last_request_time = now
+    
+    def _get_headers(self) -> dict:
+        """Get request headers."""
+        return {
+            "User-Agent": self.user_agent,
+            "Accept": "application/json",
+        }
+    
+    def fetch_raw(self, url: str) -> Dict[str, Any]:
+        """Fetch data from Alpha Vantage API."""
+        if not self.api_key:
+            # Try one more time to get from environment (in case .env was loaded after scraper init)
+            self.api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
+            if not self.api_key:
+                # Try Streamlit secrets one more time
+                try:
+                    import streamlit as st
+                    self.api_key = st.secrets.get("ALPHA_VANTAGE_API_KEY", None)
+                except (ImportError, AttributeError, FileNotFoundError, TypeError):
+                    pass
+            
+            if not self.api_key:
+                raise ValueError(
+                    "ALPHA_VANTAGE_API_KEY is required. "
+                    "Please set it in your .env file or Streamlit secrets. "
+                    "Get a free API key from https://www.alphavantage.co/support/#api-key"
+                )
+        
+        self._rate_limit()
+        
+        # Determine endpoint
+        if self.config and self.config.data_source.endpoint:
+            endpoint = self.config.data_source.endpoint
+        else:
+            # Default to company overview for a single symbol
+            # Extract symbol from URL if present, otherwise use AAPL as default
+            symbol = "AAPL"
+            if "symbol=" in url:
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(url)
+                params = parse_qs(parsed.query)
+                if "symbol" in params:
+                    symbol = params["symbol"][0]
+            
+            endpoint = f"{self.API_BASE}?function=OVERVIEW&symbol={symbol}&apikey={self.api_key}"
+        
+        # Ensure API key is in the endpoint
+        if "apikey=" not in endpoint:
+            separator = "&" if "?" in endpoint else "?"
+            endpoint = f"{endpoint}{separator}apikey={self.api_key}"
+        
+        self.logger.info(f"Fetching from Alpha Vantage: {endpoint.split('apikey=')[0]}...")
+        
+        response = requests.get(
+            endpoint,
+            headers=self._get_headers(),
+            timeout=self.timeout,
+        )
+        
+        response.raise_for_status()
+        json_data = response.json()
+        
+        # Check for API errors
+        if "Error Message" in json_data:
+            error_msg = json_data["Error Message"]
+            self.logger.error(f"Alpha Vantage API error: {error_msg}")
+            raise ValueError(f"Alpha Vantage API error: {error_msg}")
+        
+        if "Note" in json_data:
+            # Rate limit message
+            note = json_data["Note"]
+            self.logger.warning(f"Alpha Vantage rate limit: {note}")
+            raise ValueError(f"Rate limit exceeded: {note}")
+        
+        return {
+            "type": "api_json",
+            "content": response.text,
+            "endpoint_url": endpoint.split("apikey=")[0] if "apikey=" in endpoint else endpoint,
+            "status_code": response.status_code,
+            "json_data": json_data,  # Include parsed JSON for convenience
+        }
+    
+    def parse_raw(self, raw_data: Dict[str, Any]) -> pd.DataFrame:
+        """Parse Alpha Vantage API response."""
+        # Use pre-parsed JSON if available, otherwise parse from content
+        if "json_data" in raw_data:
+            json_data = raw_data["json_data"]
+        else:
+            content = raw_data.get("content")
+            try:
+                json_data = json.loads(content) if isinstance(content, str) else content
+            except json.JSONDecodeError as e:
+                self.logger.error(f"Failed to parse JSON: {e}")
+                return pd.DataFrame()
+        
+        # Check for errors
+        if "Error Message" in json_data:
+            self.logger.error(f"API error: {json_data['Error Message']}")
+            return pd.DataFrame()
+        
+        if "Note" in json_data:
+            self.logger.warning(f"Rate limit: {json_data['Note']}")
+            return pd.DataFrame()
+        
+        # Company Overview format: single object with all company fields
+        # Convert to single-row DataFrame
+        if isinstance(json_data, dict) and "Symbol" in json_data:
+            # Single company overview
+            df = pd.DataFrame([json_data])
+        elif isinstance(json_data, list):
+            # List of companies (for top stocks)
+            df = pd.DataFrame(json_data)
+        else:
+            # Try to convert to DataFrame
+            df = pd.DataFrame([json_data])
+        
+        # Convert MarketCapitalization to numeric if present
+        if "MarketCapitalization" in df.columns:
+            # Market cap is usually a string like "1234567890"
+            df["MarketCapitalization"] = pd.to_numeric(
+                df["MarketCapitalization"], 
+                errors="coerce"
+            )
+        
+        # Sort by MarketCapitalization if present
+        if "MarketCapitalization" in df.columns:
+            df = df.sort_values("MarketCapitalization", ascending=False, na_position="last")
+        
+        self.logger.info(f"Parsed {len(df)} rows from Alpha Vantage")
+        return df
+    
+    def fetch_top_stocks_by_market_cap(self) -> pd.DataFrame:
+        """
+        Fetch company overview for top 20 stocks by market cap.
+        
+        Returns:
+            DataFrame with all stocks, sorted by market cap descending
+        """
+        if not self.api_key:
+            raise ValueError("ALPHA_VANTAGE_API_KEY is required")
+        
+        all_data = []
+        failed_symbols = []
+        
+        self.logger.info(f"Fetching company overview for {len(self.TOP_20_STOCKS)} stocks...")
+        
+        for i, symbol in enumerate(self.TOP_20_STOCKS, 1):
+            try:
+                self.logger.info(f"Fetching {i}/{len(self.TOP_20_STOCKS)}: {symbol}")
+                
+                # Build endpoint URL
+                endpoint = f"{self.API_BASE}?function=OVERVIEW&symbol={symbol}&apikey={self.api_key}"
+                
+                # Apply rate limiting
+                self._rate_limit()
+                
+                # Make request
+                response = requests.get(
+                    endpoint,
+                    headers=self._get_headers(),
+                    timeout=self.timeout,
+                )
+                
+                response.raise_for_status()
+                json_data = response.json()
+                
+                # Check for errors
+                if "Error Message" in json_data:
+                    error_msg = json_data["Error Message"]
+                    self.logger.warning(f"Error fetching {symbol}: {error_msg}")
+                    failed_symbols.append(symbol)
+                    continue
+                
+                if "Note" in json_data:
+                    note = json_data["Note"]
+                    self.logger.warning(f"Rate limit for {symbol}: {note}")
+                    # Wait longer and retry
+                    import time
+                    time.sleep(60)  # Wait 1 minute
+                    # Retry once
+                    response = requests.get(
+                        endpoint,
+                        headers=self._get_headers(),
+                        timeout=self.timeout,
+                    )
+                    response.raise_for_status()
+                    json_data = response.json()
+                    if "Error Message" in json_data or "Note" in json_data:
+                        failed_symbols.append(symbol)
+                        continue
+                
+                # Add to results
+                if "Symbol" in json_data:
+                    all_data.append(json_data)
+                else:
+                    self.logger.warning(f"No data returned for {symbol}")
+                    failed_symbols.append(symbol)
+                
+            except Exception as e:
+                self.logger.error(f"Error fetching {symbol}: {e}")
+                failed_symbols.append(symbol)
+                continue
+        
+        if not all_data:
+            self.logger.error("No data fetched for any stocks")
+            return pd.DataFrame()
+        
+        # Create DataFrame
+        df = pd.DataFrame(all_data)
+        
+        # Convert MarketCapitalization to numeric
+        if "MarketCapitalization" in df.columns:
+            df["MarketCapitalization"] = pd.to_numeric(
+                df["MarketCapitalization"],
+                errors="coerce"
+            )
+            # Sort by market cap descending
+            df = df.sort_values("MarketCapitalization", ascending=False, na_position="last")
+        
+        if failed_symbols:
+            self.logger.warning(f"Failed to fetch data for: {', '.join(failed_symbols)}")
+        
+        self.logger.info(f"Successfully fetched {len(df)} stocks")
+        return df
+    
+    def scrape(
+        self,
+        url: Optional[str] = None,
+        override_robots: bool = False,
+        save_raw: bool = True,
+    ) -> ScraperResult:
+        """
+        Override scrape method to handle top_20_stocks case.
+        """
+        # Check if this is the top_20_stocks site
+        if self.site_id == "alphavantage_top_20_stocks":
+            self._run_id = generate_run_id(self.site_id)
+            self.logger.info(f"Fetching top 20 stocks by market cap (run_id: {self.run_id})")
+            
+            result = ScraperResult(
+                success=False,
+                source=self.site_id,
+                url=url or "top_20_stocks",
+                run_id=self.run_id,
+            )
+            
+            try:
+                # Skip robots.txt check for API calls
+                result.robots_decision = None
+                
+                # Fetch top stocks
+                df = self.fetch_top_stocks_by_market_cap()
+                
+                if df is None or df.empty:
+                    result.error = "No data extracted"
+                    return result
+                
+                # Validate
+                warnings = self.validate(df)
+                result.validation_warnings = warnings
+                
+                if warnings:
+                    self.logger.warning(f"Validation warnings: {warnings}")
+                
+                # Set result
+                result.success = True
+                result.data = df
+                result.rows_extracted = len(df)
+                
+                self.logger.info(
+                    f"Scrape successful: {result.rows_extracted} rows extracted"
+                )
+                
+            except Exception as e:
+                self.logger.error(f"Scrape failed: {e}")
+                result.error = str(e)
+            
+            return result
+        else:
+            # Use parent scrape method for single company overview
+            return super().scrape(url, override_robots, save_raw)
+
+
 class FallbackManager:
     """
     Manager for fallback data sources.
@@ -464,6 +832,9 @@ def get_fallback_scraper(site_id: str) -> Optional[BaseScraper]:
         # Legacy CryptoCompare
         api_key = os.getenv("CRYPTOCOMPARE_API_KEY") or os.getenv("COINDESK_API_KEY")
         return CryptoCompareScraper(config=config, api_key=api_key, use_coindesk=False)
+    elif site_id.startswith("alphavantage"):
+        api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
+        return AlphaVantageScraper(config=config, api_key=api_key)
     
     return None
 

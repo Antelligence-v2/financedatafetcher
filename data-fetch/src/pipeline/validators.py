@@ -49,20 +49,23 @@ class DataValidator:
     def __init__(
         self,
         strict_mode: bool = False,
-        date_column: str = "date",
+        date_column: Optional[str] = "date",
         numeric_columns: Optional[List[str]] = None,
+        require_date_column: bool = False,
     ):
         """
         Initialize the validator.
         
         Args:
             strict_mode: If True, warnings become errors
-            date_column: Name of the date column
+            date_column: Name of the date column (None to skip date checks)
             numeric_columns: List of numeric column names to validate
+            require_date_column: If True, missing date column is an error
         """
         self.strict_mode = strict_mode
         self.date_column = date_column
         self.numeric_columns = numeric_columns or []
+        self.require_date_column = require_date_column
         self.logger = get_logger()
         
         # Custom validators
@@ -104,6 +107,17 @@ class DataValidator:
         self._check_outliers(df, result)
         self._check_date_continuity(df, result)
         
+        # Financial-specific validations
+        self._validate_price_ranges(df, result)
+        self._validate_currency_formats(df, result)
+        self._validate_volumes(df, result)
+        self._validate_percentages(df, result)
+        self._validate_ohlc_data(df, result)
+        self._detect_anomalies(df, result)
+        
+        # Calculate data quality score
+        result.stats["quality_score"] = self._calculate_quality_score(result)
+        
         # Run custom validators
         for validator in self._custom_validators:
             try:
@@ -118,23 +132,37 @@ class DataValidator:
         
         self.logger.info(
             f"Validation complete: valid={result.is_valid}, "
-            f"errors={len(result.errors)}, warnings={len(result.warnings)}"
+            f"errors={len(result.errors)}, warnings={len(result.warnings)}, "
+            f"quality_score={result.stats.get('quality_score', 'N/A')}"
         )
         
         return result
     
     def _check_required_columns(self, df: pd.DataFrame, result: ValidationResult):
         """Check that required columns exist."""
+        # Only check for date column if it's explicitly set and required
         if self.date_column and self.date_column not in df.columns:
             # Try to find a date-like column
             date_candidates = [c for c in df.columns if "date" in c.lower() or "time" in c.lower()]
             if date_candidates:
-                result.add_warning(
-                    f"Expected date column '{self.date_column}' not found. "
-                    f"Found candidates: {date_candidates}"
-                )
+                if self.require_date_column:
+                    result.add_error(
+                        f"Required date column '{self.date_column}' not found. "
+                        f"Found candidates: {date_candidates}"
+                    )
+                else:
+                    result.add_warning(
+                        f"Expected date column '{self.date_column}' not found. "
+                        f"Found candidates: {date_candidates}"
+                    )
             else:
-                result.add_warning(f"No date column found (expected '{self.date_column}')")
+                # Only error/warn if date_column is required
+                if self.require_date_column:
+                    result.add_error(f"Required date column '{self.date_column}' not found")
+                # For non-time-series data, this is expected - only info level
+                elif self.date_column != "date":  # Custom date column name
+                    result.add_warning(f"No date column found (expected '{self.date_column}')")
+                # For default "date" column in non-time-series data, this is normal
     
     def _check_duplicates(self, df: pd.DataFrame, result: ValidationResult):
         """Check for duplicate rows."""
@@ -176,7 +204,8 @@ class DataValidator:
     
     def _check_date_column(self, df: pd.DataFrame, result: ValidationResult):
         """Validate the date column."""
-        if self.date_column not in df.columns:
+        # Skip if no date column is expected
+        if not self.date_column or self.date_column not in df.columns:
             return
         
         date_col = df[self.date_column]
@@ -299,6 +328,228 @@ class DataValidator:
                         })
         except Exception as e:
             self.logger.debug(f"Error checking date continuity: {e}")
+    
+    def _validate_price_ranges(self, df: pd.DataFrame, result: ValidationResult):
+        """Validate price ranges and detect suspicious price jumps."""
+        price_cols = [col for col in df.columns if any(kw in col.lower() for kw in ["price", "close", "open", "high", "low"])]
+        
+        for col in price_cols:
+            if col not in df.columns:
+                continue
+            
+            series = pd.to_numeric(df[col], errors="coerce").dropna()
+            if len(series) < 2:
+                continue
+            
+            # Check for negative prices (usually invalid)
+            neg_count = (series < 0).sum()
+            if neg_count > 0:
+                result.add_warning(f"Column '{col}' has {neg_count} negative prices")
+            
+            # Detect suspicious price jumps (>50% change)
+            pct_change = series.pct_change().abs()
+            large_jumps = (pct_change > 0.5).sum()
+            if large_jumps > 0:
+                result.add_warning(
+                    f"Column '{col}' has {large_jumps} suspicious price jumps (>50% change)"
+                )
+                result.stats.setdefault("price_jumps", {})[col] = large_jumps
+            
+            # Check for prices that are too high/low compared to historical data
+            if len(series) > 10:
+                mean_price = series.mean()
+                std_price = series.std()
+                outliers = series[(series < mean_price - 3 * std_price) | (series > mean_price + 3 * std_price)]
+                if len(outliers) > len(series) * 0.1:  # More than 10% outliers
+                    result.add_warning(
+                        f"Column '{col}' has {len(outliers)} extreme price outliers"
+                    )
+    
+    def _validate_currency_formats(self, df: pd.DataFrame, result: ValidationResult):
+        """Validate currency formats and consistency."""
+        price_cols = [col for col in df.columns if any(kw in col.lower() for kw in ["price", "amount", "value", "cost"])]
+        
+        if not price_cols:
+            return
+        
+        # Check for mixed currency symbols (if data is still in string format)
+        currency_symbols = set()
+        for col in price_cols:
+            if df[col].dtype == object:
+                sample = df[col].dropna().head(10)
+                for val in sample:
+                    val_str = str(val)
+                    for symbol in ["$", "€", "£", "¥", "₹"]:
+                        if symbol in val_str:
+                            currency_symbols.add(symbol)
+        
+        if len(currency_symbols) > 1:
+            result.add_warning(
+                f"Mixed currency symbols detected: {currency_symbols}. "
+                "Data may need normalization."
+            )
+            result.stats["mixed_currencies"] = list(currency_symbols)
+    
+    def _validate_volumes(self, df: pd.DataFrame, result: ValidationResult):
+        """Validate volume data (should be positive)."""
+        volume_cols = [col for col in df.columns if "volume" in col.lower()]
+        
+        for col in volume_cols:
+            if col not in df.columns:
+                continue
+            
+            series = pd.to_numeric(df[col], errors="coerce").dropna()
+            if len(series) == 0:
+                continue
+            
+            # Check for negative volumes
+            neg_count = (series < 0).sum()
+            if neg_count > 0:
+                result.add_error(f"Column '{col}' has {neg_count} negative volumes (invalid)")
+            
+            # Check for zero volumes (might indicate data issues)
+            zero_count = (series == 0).sum()
+            if zero_count > len(series) * 0.1:  # More than 10% zeros
+                result.add_warning(
+                    f"Column '{col}' has {zero_count} zero volumes ({zero_count/len(series)*100:.1f}%)"
+                )
+    
+    def _validate_percentages(self, df: pd.DataFrame, result: ValidationResult):
+        """Validate percentage values are within reasonable bounds."""
+        pct_cols = [col for col in df.columns if any(kw in col.lower() for kw in ["percent", "pct", "change", "return", "yield"])]
+        
+        for col in pct_cols:
+            if col not in df.columns:
+                continue
+            
+            series = pd.to_numeric(df[col], errors="coerce").dropna()
+            if len(series) == 0:
+                continue
+            
+            # Check for extreme percentages (outside -100% to +1000% range)
+            extreme_low = (series < -100).sum()
+            extreme_high = (series > 1000).sum()
+            
+            if extreme_low > 0:
+                result.add_warning(
+                    f"Column '{col}' has {extreme_low} values below -100%"
+                )
+            if extreme_high > 0:
+                result.add_warning(
+                    f"Column '{col}' has {extreme_high} values above 1000%"
+                )
+    
+    def _validate_ohlc_data(self, df: pd.DataFrame, result: ValidationResult):
+        """Validate OHLC (Open/High/Low/Close) data relationships."""
+        # Find OHLC columns
+        ohlc_map = {}
+        for col in df.columns:
+            col_lower = col.lower()
+            if "open" in col_lower and "open" not in ohlc_map:
+                ohlc_map["open"] = col
+            elif "high" in col_lower and "high" not in ohlc_map:
+                ohlc_map["high"] = col
+            elif "low" in col_lower and "low" not in ohlc_map:
+                ohlc_map["low"] = col
+            elif "close" in col_lower and "close" not in ohlc_map:
+                ohlc_map["close"] = col
+        
+        # Need at least High and Low for basic validation
+        if "high" not in ohlc_map or "low" not in ohlc_map:
+            return
+        
+        high_col = ohlc_map["high"]
+        low_col = ohlc_map["low"]
+        
+        high_series = pd.to_numeric(df[high_col], errors="coerce")
+        low_series = pd.to_numeric(df[low_col], errors="coerce")
+        
+        # High >= Low (always)
+        invalid = (high_series < low_series).sum()
+        if invalid > 0:
+            result.add_error(
+                f"OHLC validation failed: {invalid} rows where High < Low (impossible)"
+            )
+            result.stats["ohlc_errors"] = invalid
+        
+        # Open/Close should be within High/Low range
+        if "open" in ohlc_map:
+            open_series = pd.to_numeric(df[ohlc_map["open"]], errors="coerce")
+            invalid_open = (
+                (open_series > high_series) | (open_series < low_series)
+            ).sum()
+            if invalid_open > 0:
+                result.add_warning(
+                    f"OHLC validation: {invalid_open} rows where Open is outside High/Low range"
+                )
+        
+        if "close" in ohlc_map:
+            close_series = pd.to_numeric(df[ohlc_map["close"]], errors="coerce")
+            invalid_close = (
+                (close_series > high_series) | (close_series < low_series)
+            ).sum()
+            if invalid_close > 0:
+                result.add_warning(
+                    f"OHLC validation: {invalid_close} rows where Close is outside High/Low range"
+                )
+    
+    def _detect_anomalies(self, df: pd.DataFrame, result: ValidationResult):
+        """Detect anomalies in financial time series data."""
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        
+        for col in numeric_cols:
+            if col == self.date_column:
+                continue
+            
+            series = df[col].dropna()
+            if len(series) < 10:
+                continue
+            
+            # Use Z-score for anomaly detection
+            mean = series.mean()
+            std = series.std()
+            
+            if std == 0:
+                continue
+            
+            z_scores = (series - mean) / std
+            anomalies = (z_scores.abs() > 3).sum()  # 3 standard deviations
+            
+            if anomalies > 0:
+                pct = anomalies / len(series) * 100
+                if pct > 5:  # More than 5% anomalies
+                    result.add_warning(
+                        f"Column '{col}' has {anomalies} potential anomalies ({pct:.1f}%)"
+                    )
+                    result.stats.setdefault("anomalies", {})[col] = anomalies
+    
+    def _calculate_quality_score(self, result: ValidationResult) -> float:
+        """
+        Calculate data quality score (0-100).
+        Based on completeness, consistency, and validation results.
+        """
+        score = 100.0
+        
+        # Deduct points for errors (10 points each)
+        score -= len(result.errors) * 10
+        
+        # Deduct points for warnings (2 points each)
+        score -= len(result.warnings) * 2
+        
+        # Deduct points for null values
+        if "null_counts" in result.stats:
+            total_rows = result.stats.get("row_count", 1)
+            for col, null_count in result.stats["null_counts"].items():
+                null_pct = (null_count / total_rows) * 100
+                score -= min(null_pct * 0.5, 10)  # Max 10 points per column
+        
+        # Deduct points for duplicates
+        if "duplicate_count" in result.stats:
+            dup_pct = (result.stats["duplicate_count"] / result.stats.get("row_count", 1)) * 100
+            score -= min(dup_pct * 0.3, 5)
+        
+        # Ensure score is between 0 and 100
+        return max(0.0, min(100.0, score))
 
 
 def validate_financial_data(
