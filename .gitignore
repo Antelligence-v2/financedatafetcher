@@ -29,6 +29,17 @@ Thumbs.db
 .n8n/
 data-fetch/DEPLOYMENT.md
 
+# Market Sentiment Scrapers - Data Files
+market_sentiment/data/*.csv
+market_sentiment/data/*.json
+market_sentiment/exploration/samples/*.csv
+market_sentiment/exploration/dg_ecfin_samples/*.zip
+market_sentiment/exploration/dg_ecfin_samples/extracted/*.xlsx
+
+# Keep README and metadata structure files
+!market_sentiment/data/README.md
+!market_sentiment/exploration/samples/README.md
+
 
 
 
