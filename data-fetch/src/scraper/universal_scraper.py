@@ -151,7 +151,6 @@ class UniversalScraper(BaseScraper):
                 capture_network=True,
                 capture_response_bodies=True,
                 wait_for_selector=wait_for_selector,
-                wait_for_data_loaded=is_financial_quote,  # Use smart waiting for financial pages
             )
             
             # For Yahoo Finance, do an additional check to ensure table has data

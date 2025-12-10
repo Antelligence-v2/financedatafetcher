@@ -5,6 +5,7 @@ Handles dynamic page loading and network request interception.
 
 import asyncio
 import json
+import os
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any, Callable
 from pathlib import Path
@@ -83,6 +84,69 @@ class BrowserManager:
         self._playwright = None
         self._browser = None
         self._context = None
+        self._installation_attempted = False  # Track if we've tried to install browsers
+    
+    def _check_browser_installed(self) -> bool:
+        """
+        Check if Playwright browsers are installed.
+        
+        Returns:
+            True if browsers appear to be installed, False otherwise
+        """
+        try:
+            # Check common Playwright browser cache locations
+            home = os.path.expanduser("~")
+            playwright_paths = [
+                os.path.join(home, ".cache", "ms-playwright"),
+                os.path.join(home, ".local", "share", "ms-playwright"),
+            ]
+            
+            for base_path in playwright_paths:
+                if os.path.exists(base_path):
+                    # Look for chromium executable
+                    chromium_paths = [
+                        os.path.join(base_path, "chromium_headless_shell-*", "chrome-headless-shell-linux64", "chrome-headless-shell"),
+                        os.path.join(base_path, "chromium-*", "chrome-linux64", "chrome"),
+                    ]
+                    for pattern in chromium_paths:
+                        import glob
+                        matches = glob.glob(pattern)
+                        if matches and os.path.exists(matches[0]):
+                            self.logger.debug(f"Found Chromium at: {matches[0]}")
+                            return True
+            return False
+        except Exception as e:
+            self.logger.debug(f"Error checking browser installation: {e}")
+            return False
+    
+    def _classify_error(self, error: Exception) -> str:
+        """
+        Classify browser launch error to provide better error messages.
+        
+        Args:
+            error: The exception that occurred
+            
+        Returns:
+            Error classification: 'missing_browser', 'missing_deps', or 'runtime_error'
+        """
+        error_msg = str(error).lower()
+        
+        # Check for missing system dependencies
+        if any(keyword in error_msg for keyword in [
+            "libnspr4", "libnss3", "libatk", "libcairo", "libpango",
+            "shared libraries", "cannot open shared object", "no such file or directory"
+        ]):
+            return "missing_deps"
+        
+        # Check for missing browser executable
+        if any(keyword in error_msg for keyword in [
+            "executable", "browser", "not found", "no such file", "chromium",
+            "executable doesn't exist"
+        ]):
+            return "missing_browser"
+        
+        # Other runtime errors
+        return "runtime_error"
     
     async def __aenter__(self):
         await self.start()
@@ -102,58 +166,94 @@ class BrowserManager:
         
         self._playwright = await async_playwright().start()
         
-        # Try to launch browser, and install if missing
+        # First, try to launch browser (browsers should be pre-installed during deployment)
         try:
             self._browser = await self._playwright.chromium.launch(headless=self.headless)
+            self.logger.info("Browser launched successfully (pre-installed)")
         except Exception as e:
-            error_msg = str(e).lower()
-            # Check if it's a missing browser error or missing system dependencies
-            is_browser_error = any(keyword in error_msg for keyword in [
-                "executable", "browser", "not found", "no such file", "chromium",
-                "libnspr4", "shared libraries", "cannot open shared object"
-            ])
+            error_class = self._classify_error(e)
+            self.logger.warning(f"Browser launch failed: {error_class}")
             
-            if is_browser_error:
-                self.logger.warning("Playwright browsers not found or missing dependencies. Attempting to install automatically...")
+            # Only attempt runtime installation as last resort
+            # Check if we've already attempted installation in this session
+            if self._installation_attempted:
+                if error_class == "missing_deps":
+                    raise RuntimeError(
+                        "Playwright browser dependencies are missing. "
+                        "System dependencies should be installed via packages.txt during deployment. "
+                        "Please ensure packages.txt includes all required libraries (libnss3, libnspr4, etc.)."
+                    )
+                elif error_class == "missing_browser":
+                    raise RuntimeError(
+                        "Playwright browsers are not installed. "
+                        "Browsers should be installed during deployment via post_install.sh. "
+                        "If this persists, check deployment logs for browser installation errors."
+                    )
+                else:
+                    raise RuntimeError(
+                        f"Browser launch failed with runtime error: {str(e)}"
+                    )
+            
+            # Check if browsers appear to be installed (but launch failed)
+            browsers_exist = self._check_browser_installed()
+            
+            if error_class == "missing_deps":
+                # System dependencies missing - should be in packages.txt
+                raise RuntimeError(
+                    "Playwright browser dependencies are missing. "
+                    "This indicates packages.txt may not have been processed correctly during deployment. "
+                    "Required libraries: libnss3, libnspr4, libatk1.0-0, libatk-bridge2.0-0, and others. "
+                    f"Original error: {str(e)}"
+                )
+            
+            # If browsers don't exist and we haven't tried installing, attempt it
+            if not browsers_exist and not self._installation_attempted:
+                self.logger.warning("Browsers not found. Attempting runtime installation as fallback...")
+                self._installation_attempted = True
+                
                 try:
                     import subprocess
                     import sys
-                    # Install chromium browser with system dependencies
-                    # --with-deps is required for Streamlit Cloud and other containerized environments
-                    self.logger.info("Installing Playwright browsers with system dependencies (this may take a few minutes)...")
+                    # Try installing without --with-deps first (deps should be from packages.txt)
+                    self.logger.info("Installing Playwright browsers (system deps should already be installed)...")
                     result = subprocess.run(
-                        [sys.executable, "-m", "playwright", "install", "chromium", "--with-deps"],
+                        [sys.executable, "-m", "playwright", "install", "chromium"],
                         capture_output=True,
                         text=True,
-                        timeout=600,  # 10 minute timeout (deps installation can take longer)
+                        timeout=300,  # 5 minute timeout (reduced since deps should be pre-installed)
                     )
                     if result.returncode == 0:
-                        self.logger.info("Playwright browsers and dependencies installed successfully. Retrying browser launch...")
-                        # Close and recreate playwright instance to ensure clean state
+                        self.logger.info("Browsers installed successfully. Retrying launch...")
+                        # Close and recreate playwright instance
                         await self._playwright.stop()
                         self._playwright = await async_playwright().start()
                         self._browser = await self._playwright.chromium.launch(headless=self.headless)
                     else:
                         error_output = result.stderr or result.stdout or "Unknown error"
-                        self.logger.error(f"Failed to install Playwright browsers: {error_output}")
+                        self.logger.error(f"Runtime browser installation failed: {error_output}")
                         raise RuntimeError(
-                            f"Playwright browsers not installed and automatic installation failed: {error_output}"
+                            f"Browser installation failed. This should have been done during deployment. "
+                            f"Error: {error_output}"
                         )
                 except subprocess.TimeoutExpired:
-                    self.logger.error("Playwright browser installation timed out")
+                    self.logger.error("Browser installation timed out")
                     raise RuntimeError(
-                        "Playwright browser installation timed out. "
-                        "Please install manually with: python -m playwright install chromium --with-deps"
+                        "Browser installation timed out. Browsers should be pre-installed during deployment. "
+                        "Please check deployment logs and ensure post_install.sh runs successfully."
                     )
                 except Exception as install_error:
-                    self.logger.error(f"Error during automatic browser installation: {install_error}")
+                    self.logger.error(f"Error during browser installation: {install_error}")
                     raise RuntimeError(
-                        f"Playwright browsers not installed. Please install manually with: "
-                        f"python -m playwright install chromium --with-deps"
+                        f"Browser installation failed. This should have been done during deployment. "
+                        f"Error: {str(install_error)}"
                     )
             else:
-                # Re-raise if it's a different error
-                raise
+                # Browsers exist but launch failed - likely a runtime error
+                raise RuntimeError(
+                    f"Browser launch failed even though browsers appear to be installed. "
+                    f"This may indicate a system dependency issue or configuration problem. "
+                    f"Error: {str(e)}"
+                )
         
         self._context = await self._browser.new_context(
             user_agent=self.user_agent,

@@ -66,18 +66,64 @@ def check_environment():
         warnings.append("⚠️ Alpha Vantage API key not found. Alpha Vantage data sources will be disabled.")
     
     # Check Playwright browsers (non-blocking check)
-    # Note: On Streamlit Cloud, browsers are installed automatically via post-install
+    # Note: On Streamlit Cloud, browsers should be installed during deployment via post_install.sh
     try:
         from playwright.sync_api import sync_playwright
+        
+        # First check if browsers appear to be installed
+        home = os.path.expanduser("~")
+        playwright_paths = [
+            os.path.join(home, ".cache", "ms-playwright"),
+            os.path.join(home, ".local", "share", "ms-playwright"),
+        ]
+        browsers_found = False
+        for base_path in playwright_paths:
+            if os.path.exists(base_path):
+                import glob
+                chromium_patterns = [
+                    os.path.join(base_path, "chromium_headless_shell-*", "chrome-headless-shell-linux64", "chrome-headless-shell"),
+                    os.path.join(base_path, "chromium-*", "chrome-linux64", "chrome"),
+                ]
+                for pattern in chromium_patterns:
+                    if glob.glob(pattern):
+                        browsers_found = True
+                        break
+                if browsers_found:
+                    break
+        
+        # Try to launch browser to verify it works
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
                 browser.close()
+            # If we get here, browsers are working
         except Exception as e:
             error_msg = str(e).lower()
-            # Check if it's a missing browser error
-            if any(keyword in error_msg for keyword in ["executable", "browser", "not found", "no such file"]):
-                warnings.append("⚠️ Playwright browsers not installed. Browser automation will be disabled. The app will attempt to install browsers automatically when needed.")
+            # Classify the error
+            if any(keyword in error_msg for keyword in [
+                "libnspr4", "libnss3", "libatk", "libcairo", "libpango",
+                "shared libraries", "cannot open shared object"
+            ]):
+                warnings.append(
+                    "⚠️ Playwright browser dependencies missing. "
+                    "System libraries should be installed via packages.txt during deployment. "
+                    "Browser automation may not work until dependencies are installed."
+                )
+            elif any(keyword in error_msg for keyword in [
+                "executable", "browser", "not found", "no such file", "chromium",
+                "executable doesn't exist"
+            ]):
+                if browsers_found:
+                    warnings.append(
+                        "⚠️ Playwright browsers found but launch failed. "
+                        "This may indicate a configuration issue. Browser automation may not work."
+                    )
+                else:
+                    warnings.append(
+                        "⚠️ Playwright browsers not installed. "
+                        "Browsers should be installed during deployment via post_install.sh. "
+                        "Browser automation will be disabled."
+                    )
             else:
                 warnings.append(f"⚠️ Playwright browser check failed: {str(e)[:100]}")
     except ImportError:
@@ -153,11 +199,9 @@ if startup_warnings:
 sites = api.get_configured_sites()
 
 # Main content
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2 = st.tabs([
     "Configured Websites",
-    "Market Sentiment",
-    "Fintech News",
-    "Scrape from URL"
+    "Market Sentiment"
 ])
 
 with tab1:
@@ -375,159 +419,5 @@ with tab2:
     else:
         st.info("No FRED market sentiment indicators configured. Please add them to websites.yaml.")
 
-with tab3:
-    st.header("Fintech News")
-    
-    # News sources configuration
-    news_sources = [
-        {
-            "name": "CoinDesk",
-            "url": "https://www.coindesk.com",
-            "description": "Cryptocurrency and blockchain news"
-        },
-        {
-            "name": "The Block",
-            "url": "https://www.theblock.co",
-            "description": "Crypto markets and data"
-        },
-        {
-            "name": "Decrypt",
-            "url": "https://decrypt.co",
-            "description": "Crypto news and analysis"
-        },
-        {
-            "name": "CoinTelegraph",
-            "url": "https://cointelegraph.com",
-            "description": "Bitcoin and cryptocurrency news"
-        },
-    ]
-    
-    # Display news sources
-    st.subheader("Available News Sources")
-    cols = st.columns(2)
-    
-    for idx, source in enumerate(news_sources):
-        with cols[idx % 2]:
-            with st.container():
-                st.markdown(f"### {source['name']}")
-                st.caption(source['description'])
-                st.markdown(f"[Visit Website →]({source['url']})")
-                st.markdown("---")
-    
-    # News scraping section
-    st.subheader("Scrape News Articles")
-    st.info("💡 Tip: Use the 'Scrape from URL' tab to extract news articles from these sources.")
-    
-    # Quick links to scrape news
-    st.markdown("### Quick Scrape Links")
-    news_url_input = st.text_input(
-        "Enter news article URL:",
-        placeholder="https://www.coindesk.com/...",
-        key="news_url"
-    )
-    
-    if st.button("Scrape News Article", key="scrape_news"):
-        if news_url_input:
-            if not news_url_input.startswith(("http://", "https://")):
-                st.error("Please enter a valid URL starting with http:// or https://")
-            else:
-                with st.spinner("Scraping news article... This may take a moment."):
-                    result = api.scrape_url(
-                        url=news_url_input,
-                        use_stealth=True,
-                        override_robots=False,
-                        use_fallbacks=True,
-                    )
-                    
-                    if result["success"]:
-                        st.success(f"✅ Successfully extracted {result['rows']} rows of data!")
-                        st.dataframe(result["data"], width='stretch')
-                    else:
-                        st.error(f"❌ Scraping failed: {result.get('error', 'Unknown error')}")
-
-with tab4:
-    url_input = st.text_input(
-        "Enter website URL:",
-        placeholder="https://www.example.com/financial-data",
-        help="Enter the URL of the financial data page you want to scrape"
-    )
-    
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        scrape_button = st.button("Scrape Data", type="primary")
-    
-    if scrape_button and url_input:
-        if not url_input.startswith(("http://", "https://")):
-            st.error("Please enter a valid URL starting with http:// or https://")
-        else:
-            with st.spinner("Scraping data... This may take a moment."):
-                # Show progress
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                status_text.text("Step 1/4: Discovering data sources...")
-                progress_bar.progress(25)
-                
-                # Scrape with default values
-                result = api.scrape_url(
-                    url=url_input,
-                    use_stealth=True,
-                    override_robots=False,
-                    use_fallbacks=True,
-                )
-                
-                progress_bar.progress(100)
-                status_text.text("Complete!")
-                
-                # Display results
-                if result["success"]:
-                    st.success(f"✅ Successfully extracted {result['rows']} rows of data!")
-                    
-                    # Show warnings if any
-                    if result["warnings"]:
-                        with st.expander("⚠️ Validation Warnings", expanded=False):
-                            for warning in result["warnings"]:
-                                st.warning(warning)
-                    
-                    # Data preview
-                    st.subheader("Data Preview")
-                    preview_rows = st.slider("Rows to display:", 10, min(100, result["rows"]), 50)
-                    st.dataframe(result["data"].head(preview_rows), width='stretch')
-                    
-                    # Data statistics
-                    with st.expander("📊 Data Statistics", expanded=False):
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Total Rows", result["rows"])
-                        with col2:
-                            st.metric("Total Columns", len(result["columns"]))
-                        with col3:
-                            if result["metadata"].get("date_range"):
-                                date_range = result["metadata"]["date_range"]
-                                if date_range[0] and date_range[1]:
-                                    st.metric("Date Range", f"{str(date_range[0])[:10]} to {str(date_range[1])[:10]}")
-                    
-                    # Download section
-                    st.subheader("Download")
-                    excel_bytes, filename = api.export_to_excel(result["data"])
-                    
-                    if excel_bytes:
-                        st.download_button(
-                            label="📥 Download Excel File",
-                            data=excel_bytes,
-                            file_name=filename,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            type="primary",
-                        )
-                        st.info(f"File size: {len(excel_bytes) / 1024:.2f} KB")
-                    else:
-                        st.error("Failed to generate Excel file")
-                
-                else:
-                    st.error(f"❌ Scraping failed: {result['error']}")
-                    if result["warnings"]:
-                        with st.expander("Warnings", expanded=False):
-                            for warning in result["warnings"]:
-                                st.warning(warning)
 
 
