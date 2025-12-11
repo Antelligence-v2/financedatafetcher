@@ -35,6 +35,41 @@ if str(app_dir) not in sys.path:
 
 from src.api.frontend_api import FrontendAPI
 
+# Helper function to format large numbers as millions
+def format_millions(value):
+    """Format numbers >= 1,000,000 as X.XXM (millions with 2 decimal places)."""
+    if pd.isna(value):
+        return value
+    try:
+        num = float(value)
+        if abs(num) >= 1_000_000:
+            return f"{num / 1_000_000:.2f}M"
+        return value
+    except (ValueError, TypeError):
+        return value
+
+def format_dataframe_for_display(df):
+    """Format numeric columns in dataframe - values >= 1M shown as X.XXM."""
+    if df is None or df.empty:
+        return df
+    
+    display_df = df.copy()
+    for col in display_df.columns:
+        # Check if column is numeric
+        if pd.api.types.is_numeric_dtype(display_df[col]):
+            # Apply formatting to values >= 1 million
+            display_df[col] = display_df[col].apply(format_millions)
+    return display_df
+
+def check_browser_available():
+    """Check if Playwright browser is available for scraping."""
+    try:
+        from playwright.sync_api import sync_playwright
+        # Just check if the module imports - don't actually launch browser
+        return True
+    except ImportError:
+        return False
+
 # Startup checks
 def check_environment():
     """Check environment setup and display warnings if needed."""
@@ -138,92 +173,13 @@ if startup_warnings:
 sites = api.get_configured_sites()
 
 # Main content
-tab1, tab2, tab3, tab4 = st.tabs([
-    "Configured Websites",
+tab1, tab2, tab3 = st.tabs([
     "Crypto",
     "Market Sentiment",
     "Dental ETFs"
 ])
 
 with tab1:
-    if sites:
-        st.subheader("Available Configured Websites")
-        
-        # Display sites in columns (card-based layout)
-        cols = st.columns(2)
-        scrape_results = {}
-        
-        for idx, site in enumerate(sites):
-            with cols[idx % 2]:
-                with st.container():
-                    st.markdown(f"### {site['name']}")
-                    description = site.get('metadata', {}).get('notes', site.get('extraction_strategy', 'No description'))
-                    st.caption(description)
-                    st.markdown(f"[View Website →]({site['page_url']})")
-                    
-                    # Scrape button for this site
-                    site_id = site["id"]
-                    button_key = f"scrape_{site_id}"
-                    if st.button("Scrape", key=button_key, type="primary"):
-                        # Process scraping immediately
-                        with st.spinner(f"Scraping {site['name']}... This may take a moment."):
-                            progress_bar = st.progress(0)
-                            status_text = st.empty()
-                            
-                            status_text.text("Step 1/3: Loading site configuration...")
-                            progress_bar.progress(33)
-                            
-                            result = api.scrape_configured_site(
-                                site_id=site_id,
-                                use_stealth=True,
-                                override_robots=False,
-                            )
-                            
-                            progress_bar.progress(100)
-                            status_text.text("Complete!")
-                            scrape_results[site_id] = (result, site)
-                    
-                    st.markdown("---")
-        
-        # Display results for any site that was scraped
-        for site_id, (result, site) in scrape_results.items():
-            if result["success"]:
-                st.success(f"Successfully extracted {result['rows']} rows of data from {site['name']}!")
-                
-                # Show warnings if any
-                if result["warnings"]:
-                    with st.expander("Validation Warnings", expanded=False):
-                        for warning in result["warnings"]:
-                            st.warning(warning)
-                
-                # Data preview
-                st.subheader(f"Data Preview - {site['name']}")
-                preview_rows = st.slider("Rows to display:", 10, min(100, result["rows"]), 50, key=f"preview_{site_id}")
-                st.dataframe(result["data"].head(preview_rows), width='stretch')
-                
-                # Download section
-                st.subheader("Download")
-                excel_bytes, filename = api.export_to_excel(result["data"], filename=f"{site_id}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}")
-                
-                if excel_bytes:
-                    st.download_button(
-                        label="Download Excel File",
-                        data=excel_bytes,
-                        file_name=filename,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary",
-                        key=f"download_{site_id}"
-                    )
-                    st.info(f"File size: {len(excel_bytes) / 1024:.2f} KB")
-                else:
-                    st.error("Failed to generate Excel file")
-            
-            else:
-                st.error(f"Scraping {site['name']} failed: {result['error']}")
-    else:
-        st.info("No configured websites available. Please add sites to websites.yaml.")
-
-with tab2:
     st.subheader("Crypto Data Sources")
     st.markdown("""
     This tab provides access to cryptocurrency-related data sources including exchange volumes, 
@@ -237,6 +193,12 @@ with tab2:
         if any(keyword in s.get("id", "").lower() or keyword in s.get("name", "").lower() 
                for keyword in crypto_keywords)
     ]
+    # Sort: The Block sites first, then others alphabetically
+    theblock_sites = [s for s in crypto_sites if 'theblock' in s.get("id", "").lower()]
+    other_sites = [s for s in crypto_sites if 'theblock' not in s.get("id", "").lower()]
+    theblock_sites = sorted(theblock_sites, key=lambda x: x.get('name', '').lower())
+    other_sites = sorted(other_sites, key=lambda x: x.get('name', '').lower())
+    crypto_sites = theblock_sites + other_sites
     
     if crypto_sites:
         st.subheader("Available Crypto Data Sources")
@@ -249,10 +211,8 @@ with tab2:
             with cols[idx % 2]:
                 with st.container():
                     st.markdown(f"### {site['name']}")
-                    description = site.get('metadata', {}).get('notes', site.get('extraction_strategy', 'No description'))
+                    description = site.get('metadata', {}).get('notes', 'No description')
                     st.caption(description)
-                    extraction_strategy = site.get('extraction_strategy', 'N/A')
-                    st.markdown(f"**Strategy:** {extraction_strategy}")
                     st.markdown(f"[View Website →]({site['page_url']})")
                     
                     # Scrape button for this site
@@ -290,10 +250,24 @@ with tab2:
                         for warning in result["warnings"]:
                             st.warning(warning)
                 
-                # Data preview
+                # Data preview (latest first)
                 st.subheader(f"Data Preview - {site['name']}")
                 preview_rows = st.slider("Rows to display:", 10, min(100, result["rows"]), 50, key=f"crypto_preview_{site_id}")
-                st.dataframe(result["data"].head(preview_rows), width='stretch')
+                # Sort by date descending if date column exists (latest first)
+                preview_data = result["data"].copy()
+                # Check for common date column names
+                date_cols = [c for c in preview_data.columns if any(d in c.lower() for d in ['date', 'time', 'timestamp', 'datetime'])]
+                if date_cols:
+                    # Try to convert to datetime and sort
+                    try:
+                        preview_data[date_cols[0]] = pd.to_datetime(preview_data[date_cols[0]], errors='coerce')
+                        preview_data = preview_data.sort_values(date_cols[0], ascending=False, na_position='last')
+                    except:
+                        # If conversion fails, try sorting as-is
+                        preview_data = preview_data.sort_values(date_cols[0], ascending=False, na_position='last')
+                # Format large numbers as millions
+                display_data = format_dataframe_for_display(preview_data.head(preview_rows))
+                st.dataframe(display_data, width='stretch')
                 
                 # Download section
                 st.subheader("Download")
@@ -317,17 +291,9 @@ with tab2:
     else:
         st.info("No crypto data sources configured. Please add crypto sites to websites.yaml.")
 
-with tab3:
+with tab2:
     st.header("Market Sentiment Indicators")
     st.markdown("17 indicators from FRED, University of Michigan, and DG ECFIN")
-
-    # Check for FRED API key
-    fred_api_key = os.getenv("FRED_API_KEY")
-    if not fred_api_key:
-        st.warning("FRED_API_KEY not found in environment variables. Please set it in your .env file.")
-        st.info("Get your API key from: https://fred.stlouisfed.org/docs/api/api_key.html")
-    else:
-        st.success("FRED API key found")
 
     # Indicator metadata for card display
     INDICATORS = [
@@ -387,6 +353,11 @@ with tab3:
             # Header (no icon)
             st.markdown(f"### {indicator['short_name']}")
             st.caption(indicator['description'])
+            
+            # Add source link
+            site_config = next((s for s in sites if s.get('id') == indicator['id']), None)
+            if site_config and site_config.get('page_url'):
+                st.markdown(f"[View Source →]({site_config['page_url']})")
 
             # Status display
             data = st.session_state.indicator_data.get(card_key)
@@ -437,28 +408,40 @@ with tab3:
 
                         st.plotly_chart(fig, use_container_width=True)
 
-                    # Data table - show ALL data
+                    # Data table - show ALL data (latest first)
                     if 'data' in data:
                         df_full = data['data']
 
-                        # Prepare display dataframe
+                        # Prepare display dataframe (sorted latest first)
                         if 'value' in df_full.columns:
-                            # FRED format (newest first)
+                            # FRED format
                             display_df = df_full[['date', 'value']].copy()
-                            display_df['date'] = pd.to_datetime(display_df['date']).dt.strftime('%Y-%m-%d')
+                            display_df['date'] = pd.to_datetime(display_df['date'])
+                            display_df = display_df.sort_values('date', ascending=False)
+                            display_df['date'] = display_df['date'].dt.strftime('%Y-%m-%d')
+                            # Format large numbers as millions
+                            display_df = format_dataframe_for_display(display_df)
                             st.markdown(f"**Complete Data ({len(display_df)} rows)**")
                         else:
-                            # UMich/DG ECFIN format (oldest first)
+                            # UMich/DG ECFIN format
                             field_name = indicator.get('field')
                             if field_name and field_name in df_full.columns:
                                 display_df = df_full[['date', field_name]].copy()
-                                display_df['date'] = pd.to_datetime(display_df['date']).dt.strftime('%Y-%m-%d')
+                                display_df['date'] = pd.to_datetime(display_df['date'])
+                                display_df = display_df.sort_values('date', ascending=False)
+                                display_df['date'] = display_df['date'].dt.strftime('%Y-%m-%d')
+                                # Format large numbers as millions
+                                display_df = format_dataframe_for_display(display_df)
                                 st.markdown(f"**Complete Data ({len(display_df)} rows)**")
                             else:
                                 display_df = df_full.copy()
+                                date_cols = [c for c in display_df.columns if 'date' in c.lower()]
+                                if date_cols:
+                                    display_df = display_df.sort_values(date_cols[0], ascending=False)
+                                display_df = format_dataframe_for_display(display_df)
                                 st.markdown(f"**Complete Data ({len(display_df)} rows)**")
 
-                        st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
+                        st.dataframe(display_df, width='stretch', hide_index=True, height=400)
             elif is_fetching:
                 st.info("⏳ Fetching data...")
             else:
@@ -589,7 +572,7 @@ with tab3:
     else:
         st.info("No market sentiment indicators configured. Please add them to websites.yaml.")
 
-with tab4:
+with tab3:
     st.subheader("Dental ETFs Data Sources")
     st.markdown("""
     This tab provides access to dental-themed ETF and stock data from multiple sources.
@@ -600,6 +583,8 @@ with tab4:
     dental_sites = [s for s in sites if s.get("id", "").startswith("dental_") 
                     and s.get("id") != "dental_yahoo_etf_holdings"
                     and s.get("id") != "dental_financecharts_performance"]
+    # Sort alphabetically by name
+    dental_sites = sorted(dental_sites, key=lambda x: x.get('name', '').lower())
     
     # Initialize session state for dental tab
     if "dental_results" not in st.session_state:
@@ -751,13 +736,20 @@ with tab4:
                     if result.get("success") and result.get("data") is not None and not result["data"].empty:
                         st.success(f"Extracted {result['rows']} rows")
                         
-                        # Data preview
+                        # Data preview (latest first)
                         preview_rows = st.slider(
                             "Rows to display:",
                             5, min(50, result["rows"]), 10,
                             key=f"dental_preview_{site_id}"
                         )
-                        st.dataframe(result["data"].head(preview_rows), width='stretch')
+                        # Sort by date descending if date column exists (latest first)
+                        preview_data = result["data"].copy()
+                        date_cols = [c for c in preview_data.columns if 'date' in c.lower()]
+                        if date_cols:
+                            preview_data = preview_data.sort_values(date_cols[0], ascending=False)
+                        # Format large numbers as millions
+                        display_data = format_dataframe_for_display(preview_data.head(preview_rows))
+                        st.dataframe(display_data, width='stretch')
                         
                         # Download button
                         excel_bytes, filename = api.export_to_excel(

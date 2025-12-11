@@ -88,8 +88,20 @@ class CoinGlassScraper(BaseScraper):
         
         Returns:
             Dict with HTML content and metadata
+        
+        Raises:
+            RuntimeError: If browser dependencies are missing
         """
         self.logger.info(f"Loading CoinGlass page: {url}")
+        
+        # Check for Playwright availability first
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            raise RuntimeError(
+                "Playwright is not installed. CoinGlass scraper requires browser automation. "
+                "Install with: pip install playwright && playwright install chromium"
+            )
         
         # Use browser to load page
         async def _fetch():
@@ -246,8 +258,19 @@ class CoinGlassScraper(BaseScraper):
                 "url": url,
             }
         
-        result = asyncio.run(_fetch())
-        return result
+        try:
+            result = asyncio.run(_fetch())
+            return result
+        except RuntimeError as e:
+            error_msg = str(e)
+            if "missing" in error_msg.lower() or "libnspr4" in error_msg or "shared library" in error_msg.lower():
+                raise RuntimeError(
+                    "CoinGlass scraper requires browser automation but Playwright dependencies are not available. "
+                    "This typically happens in cloud deployments where browser libraries are missing. "
+                    "On Streamlit Cloud, ensure packages.txt includes: libnss3, libnspr4, libatk1.0-0, "
+                    "libatk-bridge2.0-0, libcups2, libdrm2, libxcomposite1, libxdamage1, libgbm1, and libpango-1.0-0."
+                )
+            raise
     
     def parse_raw(self, raw_data: Dict[str, Any]) -> pd.DataFrame:
         """

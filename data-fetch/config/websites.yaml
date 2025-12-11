@@ -26,6 +26,7 @@ sites:
       created: "2024-01-15T00:00:00Z"
       created_by: "manual"
       last_successful_extraction: null
+      notes: "7-day moving average of BTC and ETH total exchange volume"
     rate_limit: 2.0  # seconds between requests
 
   # CoinGecko - Exchange Volume (Public API)
@@ -53,6 +54,7 @@ sites:
       created: "2024-01-15T00:00:00Z"
       created_by: "manual"
       last_successful_extraction: null
+      notes: "24-hour trading volume for top cryptocurrency exchanges"
     rate_limit: 1.0
 
   # CoinGecko - BTC Market Chart (Historical Data)
@@ -80,6 +82,7 @@ sites:
       created: "2024-12-04T00:00:00Z"
       created_by: "manual"
       last_successful_extraction: null
+      notes: "Historical Bitcoin market data including prices, market caps, and trading volumes"
     rate_limit: 1.0
 
   # Legacy CryptoCompare - Daily Exchange Volume (deprecated, use CoinDesk)
@@ -106,6 +109,7 @@ sites:
       created: "2024-01-15T00:00:00Z"
       created_by: "manual"
       last_successful_extraction: null
+      notes: "Legacy daily exchange volume data (deprecated)"
     rate_limit: 0.5
 
   # Alpha Vantage - Company Overview
@@ -192,7 +196,7 @@ sites:
       created_by: "manual"
       last_successful_extraction: null
       requires_subscription: false
-      notes: "Browser-based extraction to avoid paid API"
+      notes: "Bitcoin overview metrics including price, futures/spot volume, open interest, and net inflow"
     rate_limit: 5.0  # seconds between requests (to avoid Cloudflare)
 
   # CoinGlass - Spot Inflow/Outflow (Browser-based extraction)
@@ -219,7 +223,7 @@ sites:
       created_by: "manual"
       last_successful_extraction: null
       requires_subscription: false
-      notes: "Extracted from BTC overview page or dedicated page"
+      notes: "Spot market inflow and outflow metrics across multiple timeframes (5min, 1h, 4h, 12h, 24h)"
     rate_limit: 5.0
 
   # CoinGlass - Volatility Metrics (Browser-based extraction)
@@ -246,6 +250,7 @@ sites:
       created_by: "manual"
       last_successful_extraction: null
       requires_subscription: false
+      notes: "1-day volatility metrics for major cryptocurrencies (BTC, ETH, SOL, XRP, DOGE)"
     rate_limit: 5.0
 
   # Dune Analytics - ETH Staking: Total ETH Deposited
@@ -666,7 +671,7 @@ sites:
 
   # The Block - Exchange Volume (Browser-based with API fallback)
   - id: theblock_exchange_volume
-    name: "The Block - Exchange Volume"
+    name: "The Block - Exchange Volume (BTC, ETH and SOL)"
     base_url: "https://www.theblock.co"
     page_url: "https://www.theblock.co/data/crypto-markets/spot/total-exchange-volume-daily"
     extraction_strategy: "api_json"
@@ -682,6 +687,9 @@ sites:
       bybit_spot_volume: "Bybit Spot Volume"
       bitget_spot_volume: "Bitget Spot Volume"
       dex_monthly_volume: "DEX Monthly Volume"
+      btc_volume: "BTC Volume"
+      eth_volume: "ETH Volume"
+      sol_volume: "SOL Volume"
     robots_policy:
       status: "UNKNOWN"
       last_checked: "2025-12-09T00:00:00Z"
@@ -691,36 +699,7 @@ sites:
       created_by: "manual"
       last_successful_extraction: null
       requires_subscription: false
-      notes: "May require subscription for some data"
-    rate_limit: 2.0
-
-  # The Block - ETH vs BTC Volumes (Browser-based with API fallback)
-  - id: theblock_eth_btc_volumes
-    name: "The Block - ETH vs BTC Volumes"
-    base_url: "https://www.theblock.co"
-    page_url: "https://www.theblock.co/data/crypto-markets/spot/btc-and-eth-total-exchange-volume-7dma"
-    extraction_strategy: "api_json"
-    data_source:
-      type: "api"
-      endpoint: "https://www.theblock.co/api/charts/chart/crypto-markets/spot/btc-and-eth-total-exchange-volume-7dma"
-      method: "GET"
-      requires_auth: false
-      headers: {}
-    field_mappings:
-      eth_monthly_spot_volume: "ETH Monthly Spot Volume"
-      btc_monthly_spot_volume: "BTC Monthly Spot Volume"
-      spot_eth_etf_net_flows: "Spot ETH ETF Net Flows"
-      spot_btc_etf_net_flows: "Spot BTC ETF Net Flows"
-      ytd_performance_eth_btc: "YTD Performance (ETH/BTC)"
-    robots_policy:
-      status: "UNKNOWN"
-      last_checked: "2025-12-09T00:00:00Z"
-      override_approved: false
-    metadata:
-      created: "2025-12-09T00:00:00Z"
-      created_by: "manual"
-      last_successful_extraction: null
-      requires_subscription: false
+      notes: "Daily exchange volume data including BTC, ETH, and SOL volumes, plus exchange-specific volumes (Binance, Bybit, Bitget) and DEX volume"
     rate_limit: 2.0
 
   # Bitcoin.com - Derivatives Snapshot (Uses CoinGlass data)
@@ -747,7 +726,7 @@ sites:
       created_by: "manual"
       last_successful_extraction: null
       requires_subscription: false
-      notes: "Derivatives snapshot from CoinGlass BTC page. All OI values are validated to be positive."
+      notes: "Bitcoin derivatives snapshot including futures open interest, CME/Binance OI, and options data"
     rate_limit: 5.0
 
   # CoinGlass - Liquidations (replaces Invezz)

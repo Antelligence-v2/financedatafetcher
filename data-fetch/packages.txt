@@ -1,3 +1,5 @@
+# Playwright/Chromium dependencies for Streamlit Cloud
+# These are required for browser-based scraping
 libnss3
 libnspr4
 libatk1.0-0
@@ -21,3 +23,8 @@ libpangocairo-1.0-0
 libcairo-gobject2
 libgdk-pixbuf-2.0-0
 libx11-xcb1
+# Additional dependencies for headless Chrome
+libxshmfence1
+libglu1-mesa
+libxss1
+libnss3-dev
