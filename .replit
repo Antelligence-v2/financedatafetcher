@@ -19,7 +19,7 @@ onBoot = "python -m playwright install chromium || echo 'Playwright installation
 # Command to run the Streamlit app
 # --server.port=8501: Streamlit default port
 # --server.address=0.0.0.0: Listen on all interfaces (required for Replit)
-run = ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+run = "streamlit run app.py --server.port=8501 --server.address=0.0.0.0"
 
 # Port configuration for Replit
 # Replit automatically forwards ports, but explicit configuration ensures proper deployment
@@ -30,7 +30,7 @@ externalPort = 80
 # Deployment configuration
 [deployment]
 # Command to run when deploying
-run = ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+run = "streamlit run app.py --server.port=8501 --server.address=0.0.0.0"
 # Deployment target (cloudrun for Replit Cloud)
 deploymentTarget = "cloudrun"
 
