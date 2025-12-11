@@ -175,7 +175,7 @@ with tab1:
     """)
     
     # Filter crypto-related sites
-    crypto_keywords = ["theblock", "coingecko", "coinglass", "dune", "cryptocompare"]
+    crypto_keywords = ["theblock", "coingecko", "coinglass", "dune"]
     crypto_sites = [
         s for s in sites 
         if any(keyword in s.get("id", "").lower() or keyword in s.get("name", "").lower() 
@@ -198,8 +198,13 @@ with tab1:
         for idx, site in enumerate(crypto_sites):
             with cols[idx % 2]:
                 with st.container():
-                    st.markdown(f"### {site['name']}")
+                    # Remove "TOTAL3" from site name if present
+                    display_name = site['name'].replace(' (TOTAL3)', '').replace('TOTAL3', '')
+                    st.markdown(f"### {display_name}")
+                    # Get first line of description only
                     description = site.get('metadata', {}).get('notes', 'No description')
+                    if description:
+                        description = description.split('\n')[0].strip()
                     st.caption(description)
                     st.markdown(f"[View Website →]({site['page_url']})")
                     
@@ -499,7 +504,6 @@ with tab2:
                        s.get("id", "").startswith(("fred_", "umich_", "dg_ecfin_"))]
 
     if sentiment_sites:
-        st.subheader("Market Sentiment Indicators")
         st.caption(f"17 indicators from FRED, University of Michigan, and DG ECFIN")
 
         # Fetch All button
