@@ -561,7 +561,7 @@ sites:
       notes: "5 EU indicators from MONTHLY sheet. Data from 1985-present."
     rate_limit: 5.0
 
-  # The Block - Exchange Volume (Browser-based with API fallback)
+  # The Block - Exchange Volume
   - id: theblock_exchange_volume
     name: "The Block - BTC, ETH & SOL Combined"
     base_url: "https://www.theblock.co"
