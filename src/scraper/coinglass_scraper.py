@@ -4,6 +4,7 @@ Uses browser automation to extract data from CoinGlass pages.
 """
 
 import json
+import os
 import re
 import asyncio
 from typing import Dict, Any, Optional
@@ -264,12 +265,21 @@ class CoinGlassScraper(BaseScraper):
         except RuntimeError as e:
             error_msg = str(e)
             if "missing" in error_msg.lower() or "libnspr4" in error_msg or "shared library" in error_msg.lower():
-                raise RuntimeError(
-                    "CoinGlass scraper requires browser automation but Playwright dependencies are not available. "
-                    "This typically happens in cloud deployments where browser libraries are missing. "
-                    "On Streamlit Cloud, ensure packages.txt includes: libnss3, libnspr4, libatk1.0-0, "
-                    "libatk-bridge2.0-0, libcups2, libdrm2, libxcomposite1, libxdamage1, libgbm1, and libpango-1.0-0."
-                )
+                # Detect deployment platform
+                is_replit = os.environ.get("REPL_ID") is not None
+                if is_replit:
+                    raise RuntimeError(
+                        "CoinGlass scraper requires browser automation but Playwright dependencies are not available. "
+                        "On Replit, ensure replit.nix includes: pkgs.mesa, pkgs.nss, pkgs.nspr, pkgs.atk, "
+                        "pkgs.at-spi2-atk, pkgs.cups, pkgs.libdrm, pkgs.xorg.libXcomposite, pkgs.xorg.libXdamage, "
+                        "pkgs.pango, and other browser dependencies. Rebuild the environment after updating replit.nix."
+                    )
+                else:
+                    raise RuntimeError(
+                        "CoinGlass scraper requires browser automation but Playwright dependencies are not available. "
+                        "On Streamlit Cloud, ensure packages.txt includes: libnss3, libnspr4, libatk1.0-0, "
+                        "libatk-bridge2.0-0, libcups2, libdrm2, libxcomposite1, libxdamage1, libgbm1, and libpango-1.0-0."
+                    )
             raise
     
     def parse_raw(self, raw_data: Dict[str, Any]) -> pd.DataFrame:

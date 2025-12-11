@@ -11,9 +11,8 @@ language = "python3"
 modules = ["python-3.11"]
 
 # Install Playwright browsers when Replit boots
-# This ensures browsers are available after Python dependencies are installed
-# --with-deps: Automatically installs system dependencies
-onBoot = "python -m playwright install chromium --with-deps || echo 'Playwright installation failed, continuing...'"
+# System dependencies are provided by replit.nix, so we don't use --with-deps
+onBoot = "python -m playwright install chromium || echo 'Playwright installation failed, continuing...'"
 
 # Run configuration
 [run]

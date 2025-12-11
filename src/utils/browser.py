@@ -14,6 +14,15 @@ from .logger import get_logger
 from .io_utils import ensure_dir, save_raw_response
 
 
+def _is_replit_environment() -> bool:
+    """Check if running in Replit environment."""
+    return os.environ.get("REPL_ID") is not None
+
+def _is_streamlit_cloud() -> bool:
+    """Check if running on Streamlit Cloud."""
+    return os.environ.get("STREAMLIT_CLOUD") is not None
+
+
 @dataclass
 class NetworkRequest:
     """Captured network request."""
@@ -180,8 +189,8 @@ class BrowserManager:
                 if error_class == "missing_deps":
                     raise RuntimeError(
                         "Playwright browser dependencies are missing. "
-                        "System dependencies should be installed via packages.txt during deployment. "
-                        "Please ensure packages.txt includes all required libraries (libnss3, libnspr4, etc.)."
+                        "System dependencies should be installed via replit.nix (Replit) or packages.txt (Streamlit Cloud) during deployment. "
+                        "Please ensure replit.nix includes all required packages (pkgs.mesa, pkgs.nss, pkgs.nspr, etc.)."
                     )
                 elif error_class == "missing_browser":
                     raise RuntimeError(
@@ -198,13 +207,22 @@ class BrowserManager:
             browsers_exist = self._check_browser_installed()
             
             if error_class == "missing_deps":
-                # System dependencies missing - should be in packages.txt
-                raise RuntimeError(
-                    "Playwright browser dependencies are missing. "
-                    "This indicates packages.txt may not have been processed correctly during deployment. "
-                    "Required libraries: libnss3, libnspr4, libatk1.0-0, libatk-bridge2.0-0, and others. "
-                    f"Original error: {str(e)}"
-                )
+                # System dependencies missing - detect platform and provide appropriate error
+                if _is_replit_environment():
+                    raise RuntimeError(
+                        "Playwright browser dependencies are missing. "
+                        "This indicates replit.nix may not have been processed correctly. "
+                        "Please rebuild the Replit environment (Packages > Rebuild) to ensure system dependencies are installed. "
+                        "Required packages in replit.nix: pkgs.mesa, pkgs.nss, pkgs.nspr, pkgs.atk, etc. "
+                        f"Original error: {str(e)}"
+                    )
+                else:
+                    raise RuntimeError(
+                        "Playwright browser dependencies are missing. "
+                        "This indicates packages.txt may not have been processed correctly during deployment. "
+                        "Required libraries: libnss3, libnspr4, libatk1.0-0, libatk-bridge2.0-0, and others. "
+                        f"Original error: {str(e)}"
+                    )
             
             # If browsers don't exist and we haven't tried installing, attempt it
             if not browsers_exist and not self._installation_attempted:
@@ -214,7 +232,7 @@ class BrowserManager:
                 try:
                     import subprocess
                     import sys
-                    # Try installing without --with-deps first (deps should be from packages.txt)
+                    # Try installing without --with-deps first (deps should be from replit.nix on Replit or packages.txt on Streamlit Cloud)
                     self.logger.info("Installing Playwright browsers (system deps should already be installed)...")
                     result = subprocess.run(
                         [sys.executable, "-m", "playwright", "install", "chromium"],

@@ -569,6 +569,13 @@ The framework includes intelligent error handling:
     - Check data quality score
     - Some warnings are informational and don't prevent export
 
+11. **"libgbm.so.1: cannot open shared object file" (Replit)**
+    - This indicates system dependencies are missing
+    - Ensure `replit.nix` includes all required packages (especially `pkgs.mesa`)
+    - Rebuild the Replit environment: Click Packages icon > Rebuild
+    - Verify `.replit` onBoot command doesn't use `--with-deps` flag
+    - Check that `replit.nix` is properly formatted and saved
+
 ## License
 
 MIT License
