@@ -85,33 +85,6 @@ sites:
       notes: "Historical Bitcoin market data including prices, market caps, and trading volumes"
     rate_limit: 1.0
 
-  # Legacy CryptoCompare - Daily Exchange Volume (deprecated, use CoinDesk)
-  - id: cryptocompare_exchange_volume
-    name: "CryptoCompare - Daily Exchange Volume (Legacy)"
-    base_url: "https://min-api.cryptocompare.com"
-    page_url: "https://min-api.cryptocompare.com/data/exchange/histoday"
-    extraction_strategy: "api_json"
-    data_source:
-      type: "api"
-      endpoint: "https://min-api.cryptocompare.com/data/exchange/histoday?tsym=USD&limit=30"
-      method: "GET"
-      requires_auth: false
-      headers:
-        Accept: "application/json"
-    field_mappings:
-      date: "time"
-      volume: "volume"
-    robots_policy:
-      status: "ALLOWED"
-      last_checked: "2024-01-15T00:00:00Z"
-      override_approved: false
-    metadata:
-      created: "2024-01-15T00:00:00Z"
-      created_by: "manual"
-      last_successful_extraction: null
-      notes: "Legacy daily exchange volume data (deprecated)"
-    rate_limit: 0.5
-
   # Alpha Vantage - Company Overview
   - id: alphavantage_company_overview
     name: "Alpha Vantage - Company Overview"
@@ -590,7 +563,7 @@ sites:
 
   # The Block - Exchange Volume (Browser-based with API fallback)
   - id: theblock_exchange_volume
-    name: "The Block - BTC, ETH & SOL Combined (TOTAL3)"
+    name: "The Block - BTC, ETH & SOL Combined"
     base_url: "https://www.theblock.co"
     page_url: "https://www.theblock.co/data/crypto-markets/spot/total-exchange-volume-daily"
     extraction_strategy: "api_json"

@@ -196,7 +196,7 @@ The framework comes with several pre-configured data sources:
 
 ### Crypto Data Sources
 
-1. **The Block** - BTC/ETH Exchange Volume 7DMA, BTC/ETH/SOL Combined Exchange Volume (TOTAL3)
+1. **The Block** - BTC/ETH Exchange Volume 7DMA, BTC/ETH/SOL Combined Exchange Volume
 2. **CoinGecko** - Market data and exchange volumes (supports free and Pro API)
 3. **CoinDesk** - Historical price and volume data (formerly CryptoCompare)
 4. **CoinGlass** - BTC Overview, Spot Inflow/Outflow, Volatility Metrics (browser-based)

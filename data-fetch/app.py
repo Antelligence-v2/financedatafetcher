@@ -161,7 +161,7 @@ with tab1:
     """)
     
     # Filter crypto-related sites
-    crypto_keywords = ["theblock", "coingecko", "dune", "cryptocompare"]
+    crypto_keywords = ["theblock", "coingecko", "dune"]
     crypto_sites = [
         s for s in sites 
         if any(keyword in s.get("id", "").lower() or keyword in s.get("name", "").lower() 
