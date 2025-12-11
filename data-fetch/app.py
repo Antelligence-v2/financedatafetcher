@@ -8,6 +8,7 @@ import pandas as pd
 from pathlib import Path
 import sys
 import os
+import plotly.graph_objects as go
 
 # Load environment variables from .env file FIRST, before any other imports
 try:
@@ -64,66 +65,33 @@ def check_environment():
     
     if not alphavantage_key:
         warnings.append("⚠️ Alpha Vantage API key not found. Alpha Vantage data sources will be disabled.")
-    
+
+    # Check FRED API key
+    fred_key = os.getenv("FRED_API_KEY")
+    if not fred_key:
+        # Try Streamlit secrets (only available in Streamlit Cloud)
+        try:
+            fred_key = st.secrets.get("FRED_API_KEY", None)
+        except (AttributeError, FileNotFoundError):
+            # Secrets not available (local development without secrets.toml)
+            pass
+
+    if not fred_key:
+        warnings.append("⚠️ FRED API key not found. Market sentiment indicators will be disabled.")
+
     # Check Playwright browsers (non-blocking check)
-    # Note: On Streamlit Cloud, browsers should be installed during deployment via post_install.sh
+    # Note: On Streamlit Cloud, browsers are installed automatically via post-install
     try:
         from playwright.sync_api import sync_playwright
-        
-        # First check if browsers appear to be installed
-        home = os.path.expanduser("~")
-        playwright_paths = [
-            os.path.join(home, ".cache", "ms-playwright"),
-            os.path.join(home, ".local", "share", "ms-playwright"),
-        ]
-        browsers_found = False
-        for base_path in playwright_paths:
-            if os.path.exists(base_path):
-                import glob
-                chromium_patterns = [
-                    os.path.join(base_path, "chromium_headless_shell-*", "chrome-headless-shell-linux64", "chrome-headless-shell"),
-                    os.path.join(base_path, "chromium-*", "chrome-linux64", "chrome"),
-                ]
-                for pattern in chromium_patterns:
-                    if glob.glob(pattern):
-                        browsers_found = True
-                        break
-                if browsers_found:
-                    break
-        
-        # Try to launch browser to verify it works
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
                 browser.close()
-            # If we get here, browsers are working
         except Exception as e:
             error_msg = str(e).lower()
-            # Classify the error
-            if any(keyword in error_msg for keyword in [
-                "libnspr4", "libnss3", "libatk", "libcairo", "libpango",
-                "shared libraries", "cannot open shared object"
-            ]):
-                warnings.append(
-                    "⚠️ Playwright browser dependencies missing. "
-                    "System libraries should be installed via packages.txt during deployment. "
-                    "Browser automation may not work until dependencies are installed."
-                )
-            elif any(keyword in error_msg for keyword in [
-                "executable", "browser", "not found", "no such file", "chromium",
-                "executable doesn't exist"
-            ]):
-                if browsers_found:
-                    warnings.append(
-                        "⚠️ Playwright browsers found but launch failed. "
-                        "This may indicate a configuration issue. Browser automation may not work."
-                    )
-                else:
-                    warnings.append(
-                        "⚠️ Playwright browsers not installed. "
-                        "Browsers should be installed during deployment via post_install.sh. "
-                        "Browser automation will be disabled."
-                    )
+            # Check if it's a missing browser error
+            if any(keyword in error_msg for keyword in ["executable", "browser", "not found", "no such file"]):
+                warnings.append("⚠️ Playwright browsers not installed. Browser automation will be disabled. The app will attempt to install browsers automatically when needed.")
             else:
                 warnings.append(f"⚠️ Playwright browser check failed: {str(e)[:100]}")
     except ImportError:
@@ -146,7 +114,7 @@ st.set_page_config(
     page_title="Data-Fetch: Financial Data Scraper",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 # Custom CSS for monochrome theme
@@ -189,100 +157,287 @@ def get_api():
 
 api = get_api()
 
+# Header
+st.title("📊 Data-Fetch: Financial Data Scraper")
+st.markdown("---")
+st.markdown("Extract financial data from websites and download as Excel files.")
+
 # Display startup warnings if any
 if startup_warnings:
     with st.expander("⚠️ Environment Warnings", expanded=True):
         for warning in startup_warnings:
             st.warning(warning)
 
-# Get configured sites (needed for tabs)
-sites = api.get_configured_sites()
+# Sidebar
+with st.sidebar:
+    st.header("Configuration")
+    
+    # Scraping options
+    use_stealth = st.checkbox("Enable Stealth Mode", value=True, help="Bypass basic bot detection")
+    override_robots = st.checkbox("Override robots.txt", value=False, help="Proceed even if robots.txt is UNKNOWN")
+    use_fallbacks = st.checkbox("Use Fallback Sources", value=True, help="Try alternative data sources if primary fails")
+    
+    st.markdown("---")
+    
+    # Configured sites
+    st.subheader("Configured Sites")
+    sites = api.get_configured_sites()
+    if sites:
+        site_options = ["None"] + [f"{s['id']} - {s['name']}" for s in sites]
+        selected_site = st.selectbox("Select a configured site:", site_options)
+        
+        # Show site info if selected
+        if selected_site != "None":
+            site_id = selected_site.split(" - ")[0]
+            site_info = next((s for s in sites if s["id"] == site_id), None)
+            if site_info:
+                with st.expander("Site Information", expanded=False):
+                    st.write(f"**URL:** {site_info['page_url']}")
+                    st.write(f"**Strategy:** {site_info.get('extraction_strategy', 'N/A')}")
+                    st.write(f"**API Key:** {site_info.get('api_key_status', 'N/A')}")
+                    if site_info.get('requires_subscription'):
+                        st.warning("⚠️ This site requires a paid subscription")
+                    st.write(f"**Robots.txt:** {site_info.get('robots_status', 'UNKNOWN')}")
+    else:
+        selected_site = "None"
+        st.info("No sites configured. Use URL input instead.")
 
 # Main content
-tab1, tab2 = st.tabs([
-    "Configured Websites",
-    "Market Sentiment"
+tab1, tab2, tab3, tab4 = st.tabs([
+    "Scrape from URL", 
+    "Scrape from Configured Site", 
+    "📰 Fintech News",
+    "📈 Market Sentiment"  # New tab for FRED market sentiment data
 ])
 
 with tab1:
-    if sites:
-        st.subheader("Available Configured Websites")
-        
-        # Display sites in columns (card-based layout)
-        cols = st.columns(2)
-        scrape_results = {}
-        
-        for idx, site in enumerate(sites):
-            with cols[idx % 2]:
-                with st.container():
-                    st.markdown(f"### {site['name']}")
-                    description = site.get('metadata', {}).get('notes', site.get('extraction_strategy', 'No description'))
-                    st.caption(description)
-                    st.markdown(f"[View Website →]({site['page_url']})")
+    st.header("Scrape from URL")
+    
+    url_input = st.text_input(
+        "Enter website URL:",
+        placeholder="https://www.example.com/financial-data",
+        help="Enter the URL of the financial data page you want to scrape"
+    )
+    
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        scrape_button = st.button("Scrape Data", type="primary")
+    
+    if scrape_button and url_input:
+        if not url_input.startswith(("http://", "https://")):
+            st.error("Please enter a valid URL starting with http:// or https://")
+        else:
+            with st.spinner("Scraping data... This may take a moment."):
+                # Show progress
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                status_text.text("Step 1/4: Discovering data sources...")
+                progress_bar.progress(25)
+                
+                # Scrape
+                result = api.scrape_url(
+                    url=url_input,
+                    use_stealth=use_stealth,
+                    override_robots=override_robots,
+                    use_fallbacks=use_fallbacks,
+                )
+                
+                progress_bar.progress(100)
+                status_text.text("Complete!")
+                
+                # Display results
+                if result["success"]:
+                    st.success(f"✅ Successfully extracted {result['rows']} rows of data!")
                     
-                    # Scrape button for this site
-                    site_id = site["id"]
-                    button_key = f"scrape_{site_id}"
-                    if st.button("Scrape", key=button_key, type="primary"):
-                        # Process scraping immediately
-                        with st.spinner(f"Scraping {site['name']}... This may take a moment."):
-                            progress_bar = st.progress(0)
-                            status_text = st.empty()
-                            
-                            status_text.text("Step 1/3: Loading site configuration...")
-                            progress_bar.progress(33)
-                            
-                            result = api.scrape_configured_site(
-                                site_id=site_id,
-                                use_stealth=True,
-                                override_robots=False,
-                            )
-                            
-                            progress_bar.progress(100)
-                            status_text.text("Complete!")
-                            scrape_results[site_id] = (result, site)
+                    # Show warnings if any
+                    if result["warnings"]:
+                        with st.expander("⚠️ Validation Warnings", expanded=False):
+                            for warning in result["warnings"]:
+                                st.warning(warning)
                     
-                    st.markdown("---")
-        
-        # Display results for any site that was scraped
-        for site_id, (result, site) in scrape_results.items():
-            if result["success"]:
-                st.success(f"✅ Successfully extracted {result['rows']} rows of data from {site['name']}!")
+                    # Data preview
+                    st.subheader("Data Preview")
+                    preview_rows = st.slider("Rows to display:", 10, min(100, result["rows"]), 50)
+                    st.dataframe(result["data"].head(preview_rows), width='stretch')
+                    
+                    # Data statistics
+                    with st.expander("📊 Data Statistics", expanded=False):
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Total Rows", result["rows"])
+                        with col2:
+                            st.metric("Total Columns", len(result["columns"]))
+                        with col3:
+                            if result["metadata"].get("date_range"):
+                                date_range = result["metadata"]["date_range"]
+                                if date_range[0] and date_range[1]:
+                                    st.metric("Date Range", f"{str(date_range[0])[:10]} to {str(date_range[1])[:10]}")
+                    
+                    # Download section
+                    st.subheader("Download")
+                    excel_bytes, filename = api.export_to_excel(result["data"])
+                    
+                    if excel_bytes:
+                        st.download_button(
+                            label="📥 Download Excel File",
+                            data=excel_bytes,
+                            file_name=filename,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            type="primary",
+                        )
+                        st.info(f"File size: {len(excel_bytes) / 1024:.2f} KB")
+                    else:
+                        st.error("Failed to generate Excel file")
                 
-                # Show warnings if any
-                if result["warnings"]:
-                    with st.expander("⚠️ Validation Warnings", expanded=False):
-                        for warning in result["warnings"]:
-                            st.warning(warning)
-                
-                # Data preview
-                st.subheader(f"Data Preview - {site['name']}")
-                preview_rows = st.slider("Rows to display:", 10, min(100, result["rows"]), 50, key=f"preview_{site_id}")
-                st.dataframe(result["data"].head(preview_rows), width='stretch')
-                
-                # Download section
-                st.subheader("Download")
-                excel_bytes, filename = api.export_to_excel(result["data"], filename=f"{site_id}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}")
-                
-                if excel_bytes:
-                    st.download_button(
-                        label="📥 Download Excel File",
-                        data=excel_bytes,
-                        file_name=filename,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary",
-                        key=f"download_{site_id}"
-                    )
-                    st.info(f"File size: {len(excel_bytes) / 1024:.2f} KB")
                 else:
-                    st.error("Failed to generate Excel file")
-            
-            else:
-                st.error(f"❌ Scraping {site['name']} failed: {result['error']}")
-    else:
-        st.info("No configured websites available. Please add sites to websites.yaml.")
+                    st.error(f"❌ Scraping failed: {result['error']}")
+                    if result["warnings"]:
+                        with st.expander("Warnings", expanded=False):
+                            for warning in result["warnings"]:
+                                st.warning(warning)
 
 with tab2:
+    st.header("Scrape from Configured Site")
+    
+    if selected_site and selected_site != "None":
+        site_id = selected_site.split(" - ")[0]
+        site_info = next((s for s in sites if s["id"] == site_id), None)
+        
+        if site_info:
+            st.info(f"**Site:** {site_info['name']}\n\n**URL:** {site_info['page_url']}")
+            
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                scrape_site_button = st.button("Scrape This Site", type="primary")
+            
+            if scrape_site_button:
+                with st.spinner("Scraping data... This may take a moment."):
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    status_text.text("Step 1/3: Loading site configuration...")
+                    progress_bar.progress(33)
+                    
+                    result = api.scrape_configured_site(
+                        site_id=site_id,
+                        use_stealth=use_stealth,
+                        override_robots=override_robots,
+                    )
+                    
+                    progress_bar.progress(100)
+                    status_text.text("Complete!")
+                    
+                    if result["success"]:
+                        st.success(f"✅ Successfully extracted {result['rows']} rows of data!")
+                        
+                        # Show warnings if any
+                        if result["warnings"]:
+                            with st.expander("⚠️ Validation Warnings", expanded=False):
+                                for warning in result["warnings"]:
+                                    st.warning(warning)
+                        
+                        # Data preview
+                        st.subheader("Data Preview")
+                        preview_rows = st.slider("Rows to display:", 10, min(100, result["rows"]), 50, key="site_preview")
+                        st.dataframe(result["data"].head(preview_rows), width='stretch')
+                        
+                        # Download section
+                        st.subheader("Download")
+                        excel_bytes, filename = api.export_to_excel(result["data"], filename=f"{site_id}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}")
+                        
+                        if excel_bytes:
+                            st.download_button(
+                                label="📥 Download Excel File",
+                                data=excel_bytes,
+                                file_name=filename,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                type="primary",
+                            )
+                            st.info(f"File size: {len(excel_bytes) / 1024:.2f} KB")
+                        else:
+                            st.error("Failed to generate Excel file")
+                    
+                    else:
+                        st.error(f"❌ Scraping failed: {result['error']}")
+    else:
+        st.info("Select a configured site from the sidebar to scrape data.")
+
+with tab3:
+    st.header("📰 Latest Fintech News")
+    st.markdown("Stay updated with the latest financial technology news and market insights.")
+    
+    # News sources configuration
+    news_sources = [
+        {
+            "name": "CoinDesk",
+            "url": "https://www.coindesk.com",
+            "description": "Cryptocurrency and blockchain news"
+        },
+        {
+            "name": "The Block",
+            "url": "https://www.theblock.co",
+            "description": "Crypto markets and data"
+        },
+        {
+            "name": "Decrypt",
+            "url": "https://decrypt.co",
+            "description": "Crypto news and analysis"
+        },
+        {
+            "name": "CoinTelegraph",
+            "url": "https://cointelegraph.com",
+            "description": "Bitcoin and cryptocurrency news"
+        },
+    ]
+    
+    # Display news sources
+    st.subheader("Available News Sources")
+    cols = st.columns(2)
+    
+    for idx, source in enumerate(news_sources):
+        with cols[idx % 2]:
+            with st.container():
+                st.markdown(f"### {source['name']}")
+                st.caption(source['description'])
+                st.markdown(f"[Visit Website →]({source['url']})")
+                st.markdown("---")
+    
+    # News scraping section
+    st.subheader("Scrape News Articles")
+    st.info("💡 Tip: Use the 'Scrape from URL' tab to extract news articles from these sources.")
+    
+    # Quick links to scrape news
+    st.markdown("### Quick Scrape Links")
+    news_url_input = st.text_input(
+        "Enter news article URL:",
+        placeholder="https://www.coindesk.com/...",
+        key="news_url"
+    )
+    
+    if st.button("Scrape News Article", key="scrape_news"):
+        if news_url_input:
+            if not news_url_input.startswith(("http://", "https://")):
+                st.error("Please enter a valid URL starting with http:// or https://")
+            else:
+                with st.spinner("Scraping news article... This may take a moment."):
+                    result = api.scrape_url(
+                        url=news_url_input,
+                        use_stealth=use_stealth,
+                        override_robots=override_robots,
+                        use_fallbacks=use_fallbacks,
+                    )
+                    
+                    if result["success"]:
+                        st.success(f"✅ Successfully extracted {result['rows']} rows of data!")
+                        st.dataframe(result["data"], width='stretch')
+                    else:
+                        st.error(f"❌ Scraping failed: {result.get('error', 'Unknown error')}")
+
+with tab4:
+    st.header("📈 Market Sentiment Indicators")
+    st.markdown("17 indicators from FRED, University of Michigan, and DG ECFIN")
+
     # Check for FRED API key
     fred_api_key = os.getenv("FRED_API_KEY")
     if not fred_api_key:
@@ -290,134 +445,273 @@ with tab2:
         st.info("Get your API key from: https://fred.stlouisfed.org/docs/api/api_key.html")
     else:
         st.success("✅ FRED API key found")
-    
-    # Get FRED sentiment sites
-    fred_sites = [s for s in sites if s.get("id", "").startswith("fred_")]
-    
-    if fred_sites:
-        st.subheader("Available Market Sentiment Indicators")
-        
-        # Display indicators in columns
-        cols = st.columns(2)
-        for idx, site in enumerate(fred_sites):
-            with cols[idx % 2]:
-                with st.container():
-                    st.markdown(f"### {site['name']}")
-                    st.caption(site.get('metadata', {}).get('notes', 'No description'))
-                    st.markdown(f"[View on FRED →]({site['page_url']})")
-                    st.markdown("---")
-        
-        # Bulk scraping option
-        st.subheader("Fetch Market Sentiment Data")
-        
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            scrape_all_button = st.button("Fetch All Indicators", type="primary")
-        
-        if scrape_all_button:
-            if not fred_api_key:
-                st.error("FRED API key is required. Please set FRED_API_KEY in your .env file.")
+
+    # Indicator metadata for card display
+    INDICATORS = [
+        # FRED
+        {"id": "fred_consumer_confidence", "short_name": "Consumer Confidence",
+         "description": "OECD standardized consumer confidence index", "source": "FRED"},
+        {"id": "fred_10y_breakeven_inflation", "short_name": "10Y Breakeven Inflation",
+         "description": "10-year breakeven inflation rate", "source": "FRED"},
+        {"id": "fred_consumer_sentiment", "short_name": "Consumer Sentiment",
+         "description": "University of Michigan Consumer Sentiment Index", "source": "FRED"},
+        {"id": "fred_5y5y_forward_inflation", "short_name": "5Y Forward Inflation",
+         "description": "5-year, 5-year forward inflation expectation", "source": "FRED"},
+        {"id": "fred_oecd_amplitude_adjusted", "short_name": "OECD Amplitude Adjusted",
+         "description": "OECD amplitude adjusted consumer confidence", "source": "FRED"},
+        {"id": "fred_cleveland_1yr_inflation", "short_name": "1Y Inflation Expectations",
+         "description": "Cleveland Fed 1-year inflation expectations", "source": "FRED"},
+        {"id": "fred_cleveland_10yr_inflation", "short_name": "10Y Inflation Expectations",
+         "description": "Cleveland Fed 10-year inflation expectations", "source": "FRED"},
+
+        # UMich - special handling (single source, multiple fields)
+        {"id": "umich_consumer_surveys", "field": "sentiment", "short_name": "Consumer Sentiment",
+         "description": "Index of Consumer Sentiment (ICS_ALL)", "source": "UMich"},
+        {"id": "umich_consumer_surveys", "field": "current_conditions", "short_name": "Current Conditions",
+         "description": "Current Economic Conditions (ICC)", "source": "UMich"},
+        {"id": "umich_consumer_surveys", "field": "consumer_expectations", "short_name": "Consumer Expectations",
+         "description": "Consumer Expectations (ICE)", "source": "UMich"},
+        {"id": "umich_consumer_surveys", "field": "year_ahead_inflation", "short_name": "Year-Ahead Inflation",
+         "description": "Year Ahead Inflation (PX_MD)", "source": "UMich"},
+        {"id": "umich_consumer_surveys", "field": "long_run_inflation", "short_name": "Long-Run Inflation",
+         "description": "Long Run Inflation (PX5_MD)", "source": "UMich"},
+
+        # DG ECFIN - special handling (single source, multiple fields)
+        {"id": "dg_ecfin_surveys", "field": "esi_eu", "short_name": "Economic Sentiment (EU)",
+         "description": "Economic Sentiment Indicator - EU", "source": "DG ECFIN"},
+        {"id": "dg_ecfin_surveys", "field": "esi_ea", "short_name": "Economic Sentiment (EA)",
+         "description": "Economic Sentiment Indicator - Euro Area", "source": "DG ECFIN"},
+        {"id": "dg_ecfin_surveys", "field": "eei_eu", "short_name": "Employment Expectations (EU)",
+         "description": "Employment Expectations Indicator - EU", "source": "DG ECFIN"},
+        {"id": "dg_ecfin_surveys", "field": "eei_ea", "short_name": "Employment Expectations (EA)",
+         "description": "Employment Expectations Indicator - Euro Area", "source": "DG ECFIN"},
+        {"id": "dg_ecfin_surveys", "field": "flash_consumer_confidence_ea", "short_name": "Flash Consumer Confidence",
+         "description": "Flash Consumer Confidence - Euro Area", "source": "DG ECFIN"},
+    ]
+
+    # Initialize session state for storing fetched data
+    if 'indicator_data' not in st.session_state:
+        st.session_state.indicator_data = {}
+    if 'fetching' not in st.session_state:
+        st.session_state.fetching = set()
+
+    def render_indicator_card(indicator):
+        """Render a single indicator card"""
+        # Unique key for this indicator
+        card_key = f"{indicator['id']}_{indicator.get('field', 'main')}"
+
+        with st.container(border=True):
+            # Header (no icon)
+            st.markdown(f"### {indicator['short_name']}")
+            st.caption(indicator['description'])
+
+            # Status display
+            data = st.session_state.indicator_data.get(card_key)
+            is_fetching = card_key in st.session_state.fetching
+
+            if data:
+                latest_value = data.get('latest_value')
+                latest_date = data.get('latest_date')
+                if latest_value and latest_date:
+                    st.success(f"✓ Latest: **{latest_value:.2f}** ({latest_date.strftime('%b %Y')})")
+
+                # Expandable section for chart and data
+                with st.expander("📊 View Chart & Data", expanded=False):
+                    # Chart with constrained zoom
+                    if 'chart_data' in data:
+                        chart_data = data['chart_data']
+
+                        # Create Plotly figure
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(
+                            x=chart_data.index,
+                            y=chart_data.values,
+                            mode='lines',
+                            line=dict(color='#1f77b4', width=2),
+                            name=indicator['short_name']
+                        ))
+
+                        # Set axis ranges to prevent zooming beyond FULL dataset
+                        if 'full_date_range' in data:
+                            min_date, max_date = data['full_date_range']
+                        else:
+                            # Fallback to chart data range
+                            min_date = chart_data.index.min()
+                            max_date = chart_data.index.max()
+
+                        fig.update_xaxes(
+                            range=[min_date, max_date],
+                            rangemode='normal',  # Prevents zooming beyond range
+                            fixedrange=False  # Allow zooming within range
+                        )
+
+                        fig.update_layout(
+                            height=250,
+                            margin=dict(l=0, r=0, t=0, b=0),
+                            showlegend=False,
+                            hovermode='x unified'
+                        )
+
+                        st.plotly_chart(fig, use_container_width=True)
+
+                    # Data table - show ALL data
+                    if 'data' in data:
+                        df_full = data['data']
+
+                        # Prepare display dataframe
+                        if 'value' in df_full.columns:
+                            # FRED format (newest first)
+                            display_df = df_full[['date', 'value']].copy()
+                            display_df['date'] = pd.to_datetime(display_df['date']).dt.strftime('%Y-%m-%d')
+                            st.markdown(f"**Complete Data ({len(display_df)} rows)**")
+                        else:
+                            # UMich/DG ECFIN format (oldest first)
+                            field_name = indicator.get('field')
+                            if field_name and field_name in df_full.columns:
+                                display_df = df_full[['date', field_name]].copy()
+                                display_df['date'] = pd.to_datetime(display_df['date']).dt.strftime('%Y-%m-%d')
+                                st.markdown(f"**Complete Data ({len(display_df)} rows)**")
+                            else:
+                                display_df = df_full.copy()
+                                st.markdown(f"**Complete Data ({len(display_df)} rows)**")
+
+                        st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
+            elif is_fetching:
+                st.info("⏳ Fetching data...")
             else:
-                with st.spinner("Fetching market sentiment data from FRED... This may take a moment."):
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    all_data = []
-                    latest_values = {}
-                    
-                    for idx, site in enumerate(fred_sites):
-                        site_id = site["id"]
-                        progress = (idx + 1) / len(fred_sites)
-                        progress_bar.progress(progress)
-                        status_text.text(f"Fetching {site['name']}... ({idx + 1}/{len(fred_sites)})")
-                        
-                        try:
-                            result = api.scrape_configured_site(
-                                site_id=site_id,
-                                use_stealth=False,  # Not needed for API
-                                override_robots=False,
-                            )
-                            
-                            if result["success"] and result["data"] is not None and not result["data"].empty:
-                                df = result["data"].copy()
-                                # Add series name if not present
-                                if "series_name" not in df.columns:
-                                    df["series_name"] = site["name"]
-                                
-                                all_data.append(df)
-                                
-                                # Get latest value
-                                if "value" in df.columns and "date" in df.columns:
-                                    latest_row = df.iloc[0]  # Already sorted by date desc
-                                    latest_values[site["name"]] = {
-                                        "value": latest_row.get("value"),
-                                        "date": latest_row.get("date"),
-                                    }
-                        except Exception as e:
-                            st.warning(f"Failed to fetch {site['name']}: {str(e)[:100]}")
-                    
-                    progress_bar.progress(100)
-                    status_text.text("Complete!")
-                    
-                    if all_data:
-                        # Combine all data
-                        combined_df = pd.concat(all_data, ignore_index=True)
-                        
-                        st.success(f"✅ Successfully fetched data from {len(all_data)} indicators!")
-                        
-                        # Display latest values as metrics
-                        st.subheader("Latest Values")
-                        metric_cols = st.columns(len(latest_values))
-                        for idx, (name, data) in enumerate(latest_values.items()):
-                            with metric_cols[idx % len(metric_cols)]:
-                                value = data.get("value")
-                                date = data.get("date")
-                                if pd.notna(value):
-                                    st.metric(
-                                        label=name.split(" - ")[-1] if " - " in name else name,
-                                        value=f"{float(value):.2f}" if isinstance(value, (int, float)) else str(value),
-                                        delta=None
-                                    )
-                                    if pd.notna(date):
-                                        st.caption(f"Date: {date}")
-                        
-                        # Display time series chart
-                        st.subheader("Time Series Data")
-                        if "date" in combined_df.columns and "value" in combined_df.columns:
-                            # Pivot for charting
-                            chart_df = combined_df.pivot_table(
-                                index="date",
-                                columns="series_name",
-                                values="value",
-                                aggfunc="first"
-                            )
-                            st.line_chart(chart_df)
-                        
-                        # Data preview
-                        st.subheader("Data Preview")
-                        preview_rows = st.slider("Rows to display:", 10, min(100, len(combined_df)), 50, key="sentiment_preview")
-                        st.dataframe(combined_df.head(preview_rows), width='stretch')
-                        
-                        # Export option
-                        if st.button("Export to Excel", key="export_sentiment"):
-                            try:
-                                excel_bytes, filename = api.export_to_excel(combined_df)
-                                if excel_bytes:
-                                    st.success("✅ Excel file generated successfully!")
-                                    st.download_button(
-                                        label="Download Excel File",
-                                        data=excel_bytes,
-                                        file_name=filename,
-                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                    )
-                                else:
-                                    st.error("Failed to generate Excel file")
-                            except Exception as e:
-                                st.error(f"Export failed: {str(e)}")
+                st.caption("🔵 Not fetched")
+
+    def fetch_indicator(indicator, card_key):
+        """Fetch data for a single indicator"""
+        st.session_state.fetching.add(card_key)
+
+        try:
+            # Fetch the source data
+            site_id = indicator['id']
+
+            result = api.scrape_configured_site(
+                site_id=site_id,
+                use_stealth=False,
+                override_robots=False,
+            )
+
+            if result["success"] and result["data"] is not None and not result["data"].empty:
+                df = result["data"]
+
+                # Handle different data formats
+                if "value" in df.columns:
+                    # FRED format: single series (newest data first)
+                    latest_row = df.iloc[0] if len(df) > 0 else None
+                    if latest_row is not None:
+                        # Get ALL data and reverse to chronological order for chart
+                        chart_df = df.copy()
+                        chart_df = chart_df.iloc[::-1]  # Reverse to oldest->newest
+
+                        # Store full date range from entire dataset
+                        full_dates = pd.to_datetime(df['date'])
+
+                        st.session_state.indicator_data[card_key] = {
+                            "data": df,
+                            "latest_value": latest_row["value"],
+                            "latest_date": pd.to_datetime(latest_row["date"]),
+                            "chart_data": chart_df.set_index('date')['value'],
+                            "full_date_range": (full_dates.min(), full_dates.max())
+                        }
+                else:
+                    # UMich/DG ECFIN format: multiple fields
+                    field_name = indicator.get('field')
+                    if field_name and field_name in df.columns:
+                        latest_row = df.iloc[-1] if len(df) > 0 else None
+                        if latest_row is not None:
+                            # Store full date range from entire dataset
+                            full_dates = pd.to_datetime(df['date'])
+
+                            st.session_state.indicator_data[card_key] = {
+                                "data": df,
+                                "latest_value": latest_row[field_name],
+                                "latest_date": pd.to_datetime(latest_row["date"]),
+                                "chart_data": df.set_index('date')[field_name],  # ALL data, not just tail(24)
+                                "full_date_range": (full_dates.min(), full_dates.max())
+                            }
+        except Exception as e:
+            st.error(f"Error fetching {indicator['short_name']}: {str(e)[:100]}")
+        finally:
+            st.session_state.fetching.discard(card_key)
+
+        st.rerun()
+
+    # Get all sentiment sites (still needed for validation)
+    sentiment_sites = [s for s in sites if
+                       s.get("id", "").startswith(("fred_", "umich_", "dg_ecfin_"))]
+
+    if sentiment_sites:
+        st.subheader("📊 Market Sentiment Indicators")
+        st.caption(f"17 indicators from FRED, University of Michigan, and DG ECFIN")
+
+        # Fetch All button
+        col1, col2, col3 = st.columns([2, 2, 6])
+        with col1:
+            if st.button("🚀 Fetch All Indicators", type="primary", use_container_width=True):
+                # Mark all indicators as fetching
+                for indicator in INDICATORS:
+                    card_key = f"{indicator['id']}_{indicator.get('field', 'main')}"
+                    st.session_state.fetching.add(card_key)
+                st.rerun()
+
+        with col2:
+            # Show progress if any indicators are being fetched
+            fetching_count = len(st.session_state.fetching)
+            if fetching_count > 0:
+                st.info(f"⏳ Fetching {fetching_count} indicator(s)...")
+
+        # Fetch indicators that are marked for fetching (one at a time per rerun)
+        if st.session_state.fetching:
+            # Get the first indicator to fetch
+            for indicator in INDICATORS:
+                card_key = f"{indicator['id']}_{indicator.get('field', 'main')}"
+                if card_key in st.session_state.fetching:
+                    # Only fetch if not already fetched
+                    if card_key not in st.session_state.indicator_data:
+                        fetch_indicator(indicator, card_key)
+                        break  # Fetch one at a time, rerun will continue with next
                     else:
-                        st.error("No data was successfully fetched. Please check your API key and try again.")
+                        # Already fetched, just remove from fetching set
+                        st.session_state.fetching.discard(card_key)
+
+        st.divider()
+
+        # Group indicators by source
+        fred_indicators = [i for i in INDICATORS if i['source'] == 'FRED']
+        umich_indicators = [i for i in INDICATORS if i['source'] == 'UMich']
+        dg_ecfin_indicators = [i for i in INDICATORS if i['source'] == 'DG ECFIN']
+
+        # FRED Section
+        st.markdown("### 🇺🇸 FRED Market Sentiment (7 indicators)")
+        for indicator in fred_indicators:
+            render_indicator_card(indicator)
+
+        st.divider()
+
+        # UMich Section
+        st.markdown("### 🎓 University of Michigan Consumer Surveys (5 fields)")
+        for indicator in umich_indicators:
+            render_indicator_card(indicator)
+
+        st.divider()
+
+        # DG ECFIN Section
+        st.markdown("### 🇪🇺 DG ECFIN EU Surveys (5 indicators)")
+        for indicator in dg_ecfin_indicators:
+            render_indicator_card(indicator)
     else:
-        st.info("No FRED market sentiment indicators configured. Please add them to websites.yaml.")
+        st.info("No market sentiment indicators configured. Please add them to websites.yaml.")
 
-
+# Footer
+st.markdown("---")
+st.markdown(
+    "<div style='text-align: center; color: #666666;'>"
+    "Data-Fetch Framework | Financial Data Scraper"
+    "</div>",
+    unsafe_allow_html=True
+)
 
