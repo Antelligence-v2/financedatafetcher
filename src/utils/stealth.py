@@ -31,26 +31,32 @@ class StealthManager:
     """
     
     # Common user agents (rotated to avoid patterns)
+    # Railway-optimized: Linux-based user agents for Docker/headless environments
     USER_AGENTS = [
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     ]
     
     # WebGL vendor/renderer combinations
+    # Railway-optimized: Linux/headless-friendly combinations
     WEBGL_VENDORS = [
-        "Intel Inc.",
         "Google Inc. (NVIDIA)",
         "Google Inc. (Intel)",
+        "Mesa/X.org",
+        "Intel Inc.",
         "Apple Inc.",
     ]
     
     WEBGL_RENDERERS = [
-        "Intel Iris OpenGL Engine",
         "ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 Direct3D11 vs_5_0 ps_5_0, D3D11)",
         "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "Mesa DRI Intel(R) UHD Graphics 630 (Coffeelake 3x8 GT2)",
+        "Intel Iris OpenGL Engine",
         "Apple GPU",
     ]
     
@@ -100,7 +106,12 @@ class StealthManager:
         user_agent = random.choice(self.USER_AGENTS)
         
         # Extract platform from user agent
-        if "Macintosh" in user_agent:
+        # Railway-optimized: Prefer Linux for Docker/headless environments
+        if "Linux" in user_agent or "X11" in user_agent:
+            platform = "Linux x86_64"
+            viewport_width = random.choice([1920, 1366, 1600])
+            viewport_height = random.choice([1080, 768, 900])
+        elif "Macintosh" in user_agent:
             platform = "MacIntel"
             viewport_width = random.choice([1920, 1440, 2560])
             viewport_height = random.choice([1080, 900, 1440])
@@ -109,6 +120,7 @@ class StealthManager:
             viewport_width = random.choice([1920, 1366, 2560])
             viewport_height = random.choice([1080, 768, 1440])
         else:
+            # Default to Linux for headless/Docker environments
             platform = "Linux x86_64"
             viewport_width = random.choice([1920, 1366])
             viewport_height = random.choice([1080, 768])
@@ -213,7 +225,7 @@ class StealthManager:
                 get: () => '{fingerprint.platform}'
             }});
             """,
-            # Override WebGL
+            # Override WebGL with Railway-optimized values
             f"""
             const getParameter = WebGLRenderingContext.prototype.getParameter;
             WebGLRenderingContext.prototype.getParameter = function(parameter) {{
@@ -225,6 +237,24 @@ class StealthManager:
                 }}
                 return getParameter.call(this, parameter);
             }};
+            """,
+            # Canvas fingerprint randomization (Railway-optimized)
+            """
+            const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+            HTMLCanvasElement.prototype.toDataURL = function(type) {
+                const context = this.getContext('2d');
+                if (context) {
+                    const imageData = context.getImageData(0, 0, this.width, this.height);
+                    // Add minimal noise to prevent fingerprinting
+                    for (let i = 0; i < imageData.data.length; i += 4) {
+                        if (Math.random() < 0.001) {
+                            imageData.data[i] = Math.min(255, imageData.data[i] + Math.floor(Math.random() * 3) - 1);
+                        }
+                    }
+                    context.putImageData(imageData, 0, 0);
+                }
+                return originalToDataURL.apply(this, arguments);
+            };
             """,
             # Override plugins
             """

@@ -76,14 +76,14 @@ def check_environment():
     warnings = []
     
     # Check OpenAI API key
-    # Replit uses environment variables via Secrets tool (no st.secrets needed)
+    # Environment variables are loaded from .env file or system environment
     openai_key = os.getenv("OPENAI_API_KEY")
     
     if not openai_key:
         warnings.append("OpenAI API key not found. LLM-powered data detection will be disabled.")
     
     # Check Alpha Vantage API key
-    # Replit uses environment variables via Secrets tool (no st.secrets needed)
+    # Environment variables are loaded from .env file or system environment
     alphavantage_key = os.getenv("ALPHA_VANTAGE_API_KEY")
     
     if not alphavantage_key:

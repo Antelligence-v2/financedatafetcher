@@ -46,42 +46,42 @@ cp env.example .env
 
 ## Deployment
 
-### Streamlit Cloud
+### Railway Deployment (Recommended)
 
-The app can be deployed to Streamlit Cloud. See the Streamlit Cloud documentation for details.
-
-### Replit Deployment (Recommended for Playwright)
-
-Replit provides native support for Playwright browsers and better control over system dependencies.
+Railway provides excellent support for Docker-based deployments with Playwright.
 
 **Quick Setup:**
 
-1. **Import to Replit**
-   - Create a new Repl and import this project
-   - Set the working directory to `data-fetch/` if importing the entire repo
+1. **Push to GitHub**
+   - Ensure your code is in a GitHub repository
+   - Railway will auto-detect the Dockerfile
 
-2. **Configure Secrets**
-   - Click the lock icon (🔒) in Replit sidebar
-   - Add your API keys as secrets (they'll be available as environment variables)
-   - Required: `OPENAI_API_KEY`
-   - Optional: See `env.example` for all available keys
+2. **Create Railway Project**
+   - Sign up at [railway.app](https://railway.app)
+   - Click "New Project" → "Deploy from GitHub repo"
+   - Select your repository
 
-3. **Run the App**
-   - Click "Run" - Replit will automatically:
-     - Install Python dependencies from `requirements.txt`
-     - Install Playwright browsers via `onBoot` command
-     - Start Streamlit on port 8501
+3. **Configure Environment Variables**
+   - In Railway dashboard, go to your service → Variables
+   - Add required variables:
+     - `OPENAI_API_KEY` (optional, for LLM features)
+     - `ALPHA_VANTAGE_API_KEY` (optional, for Alpha Vantage data)
+   - Railway automatically sets `PORT` variable
 
-4. **Deploy (Optional)**
-   - Click "Deploy" to get a public URL
-   - The `.replit` file is already configured for deployment
-
-**For detailed instructions, see [REPLIT_SETUP.md](REPLIT_SETUP.md)**
+4. **Deploy**
+   - Railway will automatically build and deploy using the Dockerfile
+   - The app will be available at the provided Railway domain
 
 **Key Files:**
-- `.replit` - Replit configuration (entrypoint, run commands, Playwright setup)
-- `replit.nix` - System dependencies for Playwright browsers
-- `REPLIT_SETUP.md` - Complete migration and setup guide
+- `Dockerfile` - Container configuration with Playwright
+- `railway.json` - Railway deployment configuration
+- `.dockerignore` - Files excluded from Docker build
+
+**Troubleshooting:**
+
+- **Browser automation fails**: Ensure you're using the Playwright Docker image (`mcr.microsoft.com/playwright/python`)
+- **Memory issues**: Railway may need larger instance for multiple concurrent browser instances
+- **Timeout errors**: Increase timeout values in scraper configurations for slow-loading sites
 
 ## Usage
 
@@ -569,12 +569,12 @@ The framework includes intelligent error handling:
     - Check data quality score
     - Some warnings are informational and don't prevent export
 
-11. **"libgbm.so.1: cannot open shared object file" (Replit)**
+11. **"libgbm.so.1: cannot open shared object file" (Railway/Docker)**
     - This indicates system dependencies are missing
-    - Ensure `replit.nix` includes all required packages (especially `pkgs.mesa`)
-    - Rebuild the Replit environment: Click Packages icon > Rebuild
-    - Verify `.replit` onBoot command doesn't use `--with-deps` flag
-    - Check that `replit.nix` is properly formatted and saved
+    - Ensure you're using the Playwright Docker image (`mcr.microsoft.com/playwright/python`)
+    - Verify `playwright install-deps chromium` runs successfully in Dockerfile
+    - Check Railway deployment logs for browser installation errors
+    - If using a custom Dockerfile, ensure all system dependencies are installed
 
 ## License
 

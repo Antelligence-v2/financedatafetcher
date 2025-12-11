@@ -181,6 +181,7 @@ class DentalETFScraper:
     ) -> DentalScrapeResult:
         """
         Scrape holdings for multiple ETFs and combine results.
+        Includes retry logic and better error handling.
         
         Args:
             etf_symbols: List of ETF ticker symbols
@@ -190,14 +191,38 @@ class DentalETFScraper:
         """
         all_data = []
         errors = []
+        max_retries = 2
         
         for symbol in etf_symbols:
-            result = self.scrape_yahoo_etf_holdings(symbol)
-            if result.success and result.data is not None:
-                all_data.append(result.data)
-            else:
-                errors.append(f"{symbol}: {result.error}")
+            result = None
+            last_error = None
+            
+            # Retry logic for failed sources
+            for attempt in range(max_retries + 1):
+                try:
+                    result = self.scrape_yahoo_etf_holdings(symbol)
+                    if result.success and result.data is not None:
+                        all_data.append(result.data)
+                        self.logger.info(f"Successfully scraped {symbol} (attempt {attempt + 1})")
+                        break  # Success, exit retry loop
+                    else:
+                        last_error = result.error
+                        if attempt < max_retries:
+                            self.logger.warning(f"Failed to scrape {symbol} (attempt {attempt + 1}/{max_retries + 1}), retrying...")
+                            import time
+                            time.sleep(2 ** attempt)  # Exponential backoff
+                except Exception as e:
+                    last_error = str(e)
+                    self.logger.error(f"Error scraping {symbol} (attempt {attempt + 1}): {e}")
+                    if attempt < max_retries:
+                        asyncio.run(asyncio.sleep(2 ** attempt))  # Exponential backoff
+            
+            # If all retries failed, record error but continue with other symbols
+            if result is None or not result.success:
+                errors.append(f"{symbol}: {last_error or 'Unknown error'}")
+                self.logger.warning(f"Failed to scrape {symbol} after {max_retries + 1} attempts")
         
+        # Return partial success if at least one source succeeded
         if all_data:
             combined_df = pd.concat(all_data, ignore_index=True)
             return DentalScrapeResult(
@@ -224,6 +249,7 @@ class DentalETFScraper:
     ) -> DentalScrapeResult:
         """
         Scrape ETF ownership for multiple stock tickers and combine results.
+        Includes retry logic and better error handling.
         
         Args:
             tickers: List of stock ticker symbols
@@ -233,14 +259,38 @@ class DentalETFScraper:
         """
         all_data = []
         errors = []
+        max_retries = 2
         
         for ticker in tickers:
-            result = self.scrape_etfchannel_ownership(ticker)
-            if result.success and result.data is not None:
-                all_data.append(result.data)
-            else:
-                errors.append(f"{ticker}: {result.error}")
+            result = None
+            last_error = None
+            
+            # Retry logic for failed sources
+            for attempt in range(max_retries + 1):
+                try:
+                    result = self.scrape_etfchannel_ownership(ticker)
+                    if result.success and result.data is not None:
+                        all_data.append(result.data)
+                        self.logger.info(f"Successfully scraped {ticker} (attempt {attempt + 1})")
+                        break  # Success, exit retry loop
+                    else:
+                        last_error = result.error
+                        if attempt < max_retries:
+                            self.logger.warning(f"Failed to scrape {ticker} (attempt {attempt + 1}/{max_retries + 1}), retrying...")
+                            import time
+                            time.sleep(2 ** attempt)  # Exponential backoff
+                except Exception as e:
+                    last_error = str(e)
+                    self.logger.error(f"Error scraping {ticker} (attempt {attempt + 1}): {e}")
+                    if attempt < max_retries:
+                        asyncio.run(asyncio.sleep(2 ** attempt))  # Exponential backoff
+            
+            # If all retries failed, record error but continue with other symbols
+            if result is None or not result.success:
+                errors.append(f"{ticker}: {last_error or 'Unknown error'}")
+                self.logger.warning(f"Failed to scrape {ticker} after {max_retries + 1} attempts")
         
+        # Return partial success if at least one source succeeded
         if all_data:
             combined_df = pd.concat(all_data, ignore_index=True)
             return DentalScrapeResult(

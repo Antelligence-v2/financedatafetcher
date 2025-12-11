@@ -4,7 +4,7 @@
 # Browser automation (for dynamic pages)
 playwright>=1.40.0
 # Note: After installing, run: playwright install chromium
-# For Streamlit Cloud, browsers are installed during deployment
+# For Railway/Docker, browsers are installed during Docker build via Dockerfile
 
 # Data manipulation
 pandas>=2.0.0
