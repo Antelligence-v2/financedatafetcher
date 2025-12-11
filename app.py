@@ -571,10 +571,11 @@ with tab3:
     Data is scraped in real-time when you click the fetch buttons.
     """)
     
-    # Get dental ETF sites from configuration (exclude Yahoo Finance and FinanceCharts from UI)
+    # Get dental ETF sites from configuration (exclude Yahoo Finance, FinanceCharts, and SIC 3843 from UI)
     dental_sites = [s for s in sites if s.get("id", "").startswith("dental_") 
                     and s.get("id") != "dental_yahoo_etf_holdings"
-                    and s.get("id") != "dental_financecharts_performance"]
+                    and s.get("id") != "dental_financecharts_performance"
+                    and s.get("id") != "dental_fintel_sic_3843"]
     # Sort alphabetically by name
     dental_sites = sorted(dental_sites, key=lambda x: x.get('name', '').lower())
     
@@ -587,10 +588,6 @@ with tab3:
         "dental_swingtradebot_etf_list": {
             "description": "Lists all ETFs with dental theme exposure and their weighting",
             "data_points": "Symbol, Name, Grade, % Change, Weighting, Holdings"
-        },
-        "dental_fintel_sic_3843": {
-            "description": "SIC 3843 classified dental equipment and supplies companies",
-            "data_points": "Ticker, Company, Market Cap, Country"
         },
         "dental_portfoliopilot_risk_return": {
             "description": "Risk/return metrics for dental stocks",
@@ -621,38 +618,26 @@ with tab3:
         # Fetch Data Section
         st.subheader("Fetch Dental ETF Data")
         
-        # Organized button layout - 2x2 grid for better alignment
+        # Top row: Two buttons side by side
         col1, col2 = st.columns(2)
         
         with col1:
-            if st.button("Fetch All Sources", type="primary", key="fetch_all_dental", use_container_width=True):
-                with st.spinner("Fetching all dental ETF data..."):
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    for idx, site in enumerate(dental_sites):
-                        site_id = site["id"]
-                        progress = (idx + 1) / len(dental_sites)
-                        progress_bar.progress(progress)
-                        status_text.text(f"Fetching {site['name']}... ({idx + 1}/{len(dental_sites)})")
-                        
+            if st.button("Fetch Risk/Return Metrics", key="fetch_portfoliopilot", use_container_width=True):
+                site = next((s for s in dental_sites if s["id"] == "dental_portfoliopilot_risk_return"), None)
+                if site:
+                    with st.spinner(f"Fetching {site['name']}..."):
                         try:
-                            # Standard scrape
                             result = api.scrape_configured_site(
-                                site_id=site_id,
+                                site_id=site["id"],
                                 use_stealth=True,
                                 override_robots=False,
                             )
-                            
-                            st.session_state.dental_results[site_id] = (result, site)
+                            st.session_state.dental_results[site["id"]] = (result, site)
                         except Exception as e:
-                            st.session_state.dental_results[site_id] = (
+                            st.session_state.dental_results[site["id"]] = (
                                 {"success": False, "error": str(e), "data": None, "rows": 0},
                                 site
                             )
-                    
-                    progress_bar.progress(100)
-                    status_text.text("Complete!")
         
         with col2:
             if st.button("Fetch SwingTradeBot ETF List", key="fetch_swingtradebot", use_container_width=True):
@@ -672,44 +657,38 @@ with tab3:
                                 site
                             )
         
-        # Second row of buttons
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("Fetch SIC 3843 Companies", key="fetch_fintel", use_container_width=True):
-                site = next((s for s in dental_sites if s["id"] == "dental_fintel_sic_3843"), None)
-                if site:
-                    with st.spinner(f"Fetching {site['name']}..."):
-                        try:
-                            result = api.scrape_configured_site(
-                                site_id=site["id"],
-                                use_stealth=True,
-                                override_robots=False,
-                            )
-                            st.session_state.dental_results[site["id"]] = (result, site)
-                        except Exception as e:
-                            st.session_state.dental_results[site["id"]] = (
-                                {"success": False, "error": str(e), "data": None, "rows": 0},
-                                site
-                            )
-        
-        with col2:
-            if st.button("Fetch Risk/Return Metrics", key="fetch_portfoliopilot", use_container_width=True):
-                site = next((s for s in dental_sites if s["id"] == "dental_portfoliopilot_risk_return"), None)
-                if site:
-                    with st.spinner(f"Fetching {site['name']}..."):
-                        try:
-                            result = api.scrape_configured_site(
-                                site_id=site["id"],
-                                use_stealth=True,
-                                override_robots=False,
-                            )
-                            st.session_state.dental_results[site["id"]] = (result, site)
-                        except Exception as e:
-                            st.session_state.dental_results[site["id"]] = (
-                                {"success": False, "error": str(e), "data": None, "rows": 0},
-                                site
-                            )
+        # Bottom: Big "Fetch All Sources" button (full width)
+        if st.button("Fetch All Sources", type="primary", key="fetch_all_dental", use_container_width=True):
+            # Filter out SIC 3843 from fetch all since it doesn't work
+            working_sites = [s for s in dental_sites if s["id"] != "dental_fintel_sic_3843"]
+            
+            with st.spinner("Fetching all dental ETF data..."):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for idx, site in enumerate(working_sites):
+                    site_id = site["id"]
+                    progress = (idx + 1) / len(working_sites)
+                    progress_bar.progress(progress)
+                    status_text.text(f"Fetching {site['name']}... ({idx + 1}/{len(working_sites)})")
+                    
+                    try:
+                        # Standard scrape
+                        result = api.scrape_configured_site(
+                            site_id=site_id,
+                            use_stealth=True,
+                            override_robots=False,
+                        )
+                        
+                        st.session_state.dental_results[site_id] = (result, site)
+                    except Exception as e:
+                        st.session_state.dental_results[site_id] = (
+                            {"success": False, "error": str(e), "data": None, "rows": 0},
+                            site
+                        )
+                
+                progress_bar.progress(100)
+                status_text.text("Complete!")
         
         # Display Results Section
         if st.session_state.dental_results:
