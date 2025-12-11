@@ -51,7 +51,7 @@ def check_environment():
             pass
     
     if not openai_key:
-        warnings.append("⚠️ OpenAI API key not found. LLM-powered data detection will be disabled.")
+        warnings.append("OpenAI API key not found. LLM-powered data detection will be disabled.")
     
     # Check Alpha Vantage API key
     alphavantage_key = os.getenv("ALPHA_VANTAGE_API_KEY")
@@ -64,41 +64,9 @@ def check_environment():
             pass
     
     if not alphavantage_key:
-        warnings.append("⚠️ Alpha Vantage API key not found. Alpha Vantage data sources will be disabled.")
-
-    # Check FRED API key
-    fred_key = os.getenv("FRED_API_KEY")
-    if not fred_key:
-        # Try Streamlit secrets (only available in Streamlit Cloud)
-        try:
-            fred_key = st.secrets.get("FRED_API_KEY", None)
-        except (AttributeError, FileNotFoundError):
-            # Secrets not available (local development without secrets.toml)
-            pass
-
-    if not fred_key:
-        warnings.append("⚠️ FRED API key not found. Market sentiment indicators will be disabled.")
-
-    # Check Playwright browsers (non-blocking check)
-    # Note: On Streamlit Cloud, browsers are installed automatically via post-install
-    try:
-        from playwright.sync_api import sync_playwright
-        try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
-                browser.close()
-        except Exception as e:
-            error_msg = str(e).lower()
-            # Check if it's a missing browser error
-            if any(keyword in error_msg for keyword in ["executable", "browser", "not found", "no such file"]):
-                warnings.append("⚠️ Playwright browsers not installed. Browser automation will be disabled. The app will attempt to install browsers automatically when needed.")
-            else:
-                warnings.append(f"⚠️ Playwright browser check failed: {str(e)[:100]}")
-    except ImportError:
-        warnings.append("⚠️ Playwright not installed. Browser automation will not work.")
-    except Exception as e:
-        # Don't block app startup if Playwright check fails
-        warnings.append(f"⚠️ Playwright check failed: {str(e)[:100]}")
+        warnings.append("Alpha Vantage API key not found. Alpha Vantage data sources will be disabled.")
+    
+    # Playwright browser check removed - no warnings displayed
     
     return warnings
 
@@ -112,10 +80,13 @@ startup_warnings = get_startup_warnings()
 # Page configuration
 st.set_page_config(
     page_title="Data-Fetch: Financial Data Scraper",
-    page_icon="📊",
+    page_icon=None,
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
+
+# Main header
+st.title("Finance Data Fetcher")
 
 # Custom CSS for monochrome theme
 st.markdown("""
@@ -157,294 +128,206 @@ def get_api():
 
 api = get_api()
 
-# Header
-st.title("📊 Data-Fetch: Financial Data Scraper")
-st.markdown("---")
-st.markdown("Extract financial data from websites and download as Excel files.")
-
 # Display startup warnings if any
 if startup_warnings:
-    with st.expander("⚠️ Environment Warnings", expanded=True):
+    with st.expander("Environment Warnings", expanded=True):
         for warning in startup_warnings:
             st.warning(warning)
 
-# Sidebar
-with st.sidebar:
-    st.header("Configuration")
-    
-    # Scraping options
-    use_stealth = st.checkbox("Enable Stealth Mode", value=True, help="Bypass basic bot detection")
-    override_robots = st.checkbox("Override robots.txt", value=False, help="Proceed even if robots.txt is UNKNOWN")
-    use_fallbacks = st.checkbox("Use Fallback Sources", value=True, help="Try alternative data sources if primary fails")
-    
-    st.markdown("---")
-    
-    # Configured sites
-    st.subheader("Configured Sites")
-    sites = api.get_configured_sites()
-    if sites:
-        site_options = ["None"] + [f"{s['id']} - {s['name']}" for s in sites]
-        selected_site = st.selectbox("Select a configured site:", site_options)
-        
-        # Show site info if selected
-        if selected_site != "None":
-            site_id = selected_site.split(" - ")[0]
-            site_info = next((s for s in sites if s["id"] == site_id), None)
-            if site_info:
-                with st.expander("Site Information", expanded=False):
-                    st.write(f"**URL:** {site_info['page_url']}")
-                    st.write(f"**Strategy:** {site_info.get('extraction_strategy', 'N/A')}")
-                    st.write(f"**API Key:** {site_info.get('api_key_status', 'N/A')}")
-                    if site_info.get('requires_subscription'):
-                        st.warning("⚠️ This site requires a paid subscription")
-                    st.write(f"**Robots.txt:** {site_info.get('robots_status', 'UNKNOWN')}")
-    else:
-        selected_site = "None"
-        st.info("No sites configured. Use URL input instead.")
+# Get configured sites (needed for tabs)
+sites = api.get_configured_sites()
 
 # Main content
 tab1, tab2, tab3, tab4 = st.tabs([
-    "Scrape from URL", 
-    "Scrape from Configured Site", 
-    "📰 Fintech News",
-    "📈 Market Sentiment"  # New tab for FRED market sentiment data
+    "Configured Websites",
+    "Crypto",
+    "Market Sentiment",
+    "Dental ETFs"
 ])
 
 with tab1:
-    st.header("Scrape from URL")
-    
-    url_input = st.text_input(
-        "Enter website URL:",
-        placeholder="https://www.example.com/financial-data",
-        help="Enter the URL of the financial data page you want to scrape"
-    )
-    
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        scrape_button = st.button("Scrape Data", type="primary")
-    
-    if scrape_button and url_input:
-        if not url_input.startswith(("http://", "https://")):
-            st.error("Please enter a valid URL starting with http:// or https://")
-        else:
-            with st.spinner("Scraping data... This may take a moment."):
-                # Show progress
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                status_text.text("Step 1/4: Discovering data sources...")
-                progress_bar.progress(25)
-                
-                # Scrape
-                result = api.scrape_url(
-                    url=url_input,
-                    use_stealth=use_stealth,
-                    override_robots=override_robots,
-                    use_fallbacks=use_fallbacks,
-                )
-                
-                progress_bar.progress(100)
-                status_text.text("Complete!")
-                
-                # Display results
-                if result["success"]:
-                    st.success(f"✅ Successfully extracted {result['rows']} rows of data!")
+    if sites:
+        st.subheader("Available Configured Websites")
+        
+        # Display sites in columns (card-based layout)
+        cols = st.columns(2)
+        scrape_results = {}
+        
+        for idx, site in enumerate(sites):
+            with cols[idx % 2]:
+                with st.container():
+                    st.markdown(f"### {site['name']}")
+                    description = site.get('metadata', {}).get('notes', site.get('extraction_strategy', 'No description'))
+                    st.caption(description)
+                    st.markdown(f"[View Website →]({site['page_url']})")
                     
-                    # Show warnings if any
-                    if result["warnings"]:
-                        with st.expander("⚠️ Validation Warnings", expanded=False):
-                            for warning in result["warnings"]:
-                                st.warning(warning)
+                    # Scrape button for this site
+                    site_id = site["id"]
+                    button_key = f"scrape_{site_id}"
+                    if st.button("Scrape", key=button_key, type="primary"):
+                        # Process scraping immediately
+                        with st.spinner(f"Scraping {site['name']}... This may take a moment."):
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+                            
+                            status_text.text("Step 1/3: Loading site configuration...")
+                            progress_bar.progress(33)
+                            
+                            result = api.scrape_configured_site(
+                                site_id=site_id,
+                                use_stealth=True,
+                                override_robots=False,
+                            )
+                            
+                            progress_bar.progress(100)
+                            status_text.text("Complete!")
+                            scrape_results[site_id] = (result, site)
                     
-                    # Data preview
-                    st.subheader("Data Preview")
-                    preview_rows = st.slider("Rows to display:", 10, min(100, result["rows"]), 50)
-                    st.dataframe(result["data"].head(preview_rows), width='stretch')
-                    
-                    # Data statistics
-                    with st.expander("📊 Data Statistics", expanded=False):
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Total Rows", result["rows"])
-                        with col2:
-                            st.metric("Total Columns", len(result["columns"]))
-                        with col3:
-                            if result["metadata"].get("date_range"):
-                                date_range = result["metadata"]["date_range"]
-                                if date_range[0] and date_range[1]:
-                                    st.metric("Date Range", f"{str(date_range[0])[:10]} to {str(date_range[1])[:10]}")
-                    
-                    # Download section
-                    st.subheader("Download")
-                    excel_bytes, filename = api.export_to_excel(result["data"])
-                    
-                    if excel_bytes:
-                        st.download_button(
-                            label="📥 Download Excel File",
-                            data=excel_bytes,
-                            file_name=filename,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            type="primary",
-                        )
-                        st.info(f"File size: {len(excel_bytes) / 1024:.2f} KB")
-                    else:
-                        st.error("Failed to generate Excel file")
+                    st.markdown("---")
+        
+        # Display results for any site that was scraped
+        for site_id, (result, site) in scrape_results.items():
+            if result["success"]:
+                st.success(f"Successfully extracted {result['rows']} rows of data from {site['name']}!")
                 
+                # Show warnings if any
+                if result["warnings"]:
+                    with st.expander("Validation Warnings", expanded=False):
+                        for warning in result["warnings"]:
+                            st.warning(warning)
+                
+                # Data preview
+                st.subheader(f"Data Preview - {site['name']}")
+                preview_rows = st.slider("Rows to display:", 10, min(100, result["rows"]), 50, key=f"preview_{site_id}")
+                st.dataframe(result["data"].head(preview_rows), width='stretch')
+                
+                # Download section
+                st.subheader("Download")
+                excel_bytes, filename = api.export_to_excel(result["data"], filename=f"{site_id}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}")
+                
+                if excel_bytes:
+                    st.download_button(
+                        label="Download Excel File",
+                        data=excel_bytes,
+                        file_name=filename,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary",
+                        key=f"download_{site_id}"
+                    )
+                    st.info(f"File size: {len(excel_bytes) / 1024:.2f} KB")
                 else:
-                    st.error(f"❌ Scraping failed: {result['error']}")
-                    if result["warnings"]:
-                        with st.expander("Warnings", expanded=False):
-                            for warning in result["warnings"]:
-                                st.warning(warning)
+                    st.error("Failed to generate Excel file")
+            
+            else:
+                st.error(f"Scraping {site['name']} failed: {result['error']}")
+    else:
+        st.info("No configured websites available. Please add sites to websites.yaml.")
 
 with tab2:
-    st.header("Scrape from Configured Site")
+    st.subheader("Crypto Data Sources")
+    st.markdown("""
+    This tab provides access to cryptocurrency-related data sources including exchange volumes, 
+    market charts, staking statistics, and on-chain metrics.
+    """)
     
-    if selected_site and selected_site != "None":
-        site_id = selected_site.split(" - ")[0]
-        site_info = next((s for s in sites if s["id"] == site_id), None)
-        
-        if site_info:
-            st.info(f"**Site:** {site_info['name']}\n\n**URL:** {site_info['page_url']}")
-            
-            col1, col2 = st.columns([1, 4])
-            with col1:
-                scrape_site_button = st.button("Scrape This Site", type="primary")
-            
-            if scrape_site_button:
-                with st.spinner("Scraping data... This may take a moment."):
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    status_text.text("Step 1/3: Loading site configuration...")
-                    progress_bar.progress(33)
-                    
-                    result = api.scrape_configured_site(
-                        site_id=site_id,
-                        use_stealth=use_stealth,
-                        override_robots=override_robots,
-                    )
-                    
-                    progress_bar.progress(100)
-                    status_text.text("Complete!")
-                    
-                    if result["success"]:
-                        st.success(f"✅ Successfully extracted {result['rows']} rows of data!")
-                        
-                        # Show warnings if any
-                        if result["warnings"]:
-                            with st.expander("⚠️ Validation Warnings", expanded=False):
-                                for warning in result["warnings"]:
-                                    st.warning(warning)
-                        
-                        # Data preview
-                        st.subheader("Data Preview")
-                        preview_rows = st.slider("Rows to display:", 10, min(100, result["rows"]), 50, key="site_preview")
-                        st.dataframe(result["data"].head(preview_rows), width='stretch')
-                        
-                        # Download section
-                        st.subheader("Download")
-                        excel_bytes, filename = api.export_to_excel(result["data"], filename=f"{site_id}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}")
-                        
-                        if excel_bytes:
-                            st.download_button(
-                                label="📥 Download Excel File",
-                                data=excel_bytes,
-                                file_name=filename,
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                type="primary",
-                            )
-                            st.info(f"File size: {len(excel_bytes) / 1024:.2f} KB")
-                        else:
-                            st.error("Failed to generate Excel file")
-                    
-                    else:
-                        st.error(f"❌ Scraping failed: {result['error']}")
-    else:
-        st.info("Select a configured site from the sidebar to scrape data.")
-
-with tab3:
-    st.header("📰 Latest Fintech News")
-    st.markdown("Stay updated with the latest financial technology news and market insights.")
-    
-    # News sources configuration
-    news_sources = [
-        {
-            "name": "CoinDesk",
-            "url": "https://www.coindesk.com",
-            "description": "Cryptocurrency and blockchain news"
-        },
-        {
-            "name": "The Block",
-            "url": "https://www.theblock.co",
-            "description": "Crypto markets and data"
-        },
-        {
-            "name": "Decrypt",
-            "url": "https://decrypt.co",
-            "description": "Crypto news and analysis"
-        },
-        {
-            "name": "CoinTelegraph",
-            "url": "https://cointelegraph.com",
-            "description": "Bitcoin and cryptocurrency news"
-        },
+    # Filter crypto-related sites
+    crypto_keywords = ["theblock", "coingecko", "coinglass", "dune", "cryptocompare"]
+    crypto_sites = [
+        s for s in sites 
+        if any(keyword in s.get("id", "").lower() or keyword in s.get("name", "").lower() 
+               for keyword in crypto_keywords)
     ]
     
-    # Display news sources
-    st.subheader("Available News Sources")
-    cols = st.columns(2)
-    
-    for idx, source in enumerate(news_sources):
-        with cols[idx % 2]:
-            with st.container():
-                st.markdown(f"### {source['name']}")
-                st.caption(source['description'])
-                st.markdown(f"[Visit Website →]({source['url']})")
-                st.markdown("---")
-    
-    # News scraping section
-    st.subheader("Scrape News Articles")
-    st.info("💡 Tip: Use the 'Scrape from URL' tab to extract news articles from these sources.")
-    
-    # Quick links to scrape news
-    st.markdown("### Quick Scrape Links")
-    news_url_input = st.text_input(
-        "Enter news article URL:",
-        placeholder="https://www.coindesk.com/...",
-        key="news_url"
-    )
-    
-    if st.button("Scrape News Article", key="scrape_news"):
-        if news_url_input:
-            if not news_url_input.startswith(("http://", "https://")):
-                st.error("Please enter a valid URL starting with http:// or https://")
-            else:
-                with st.spinner("Scraping news article... This may take a moment."):
-                    result = api.scrape_url(
-                        url=news_url_input,
-                        use_stealth=use_stealth,
-                        override_robots=override_robots,
-                        use_fallbacks=use_fallbacks,
-                    )
+    if crypto_sites:
+        st.subheader("Available Crypto Data Sources")
+        
+        # Display sites in columns (card-based layout)
+        cols = st.columns(2)
+        scrape_results = {}
+        
+        for idx, site in enumerate(crypto_sites):
+            with cols[idx % 2]:
+                with st.container():
+                    st.markdown(f"### {site['name']}")
+                    description = site.get('metadata', {}).get('notes', site.get('extraction_strategy', 'No description'))
+                    st.caption(description)
+                    extraction_strategy = site.get('extraction_strategy', 'N/A')
+                    st.markdown(f"**Strategy:** {extraction_strategy}")
+                    st.markdown(f"[View Website →]({site['page_url']})")
                     
-                    if result["success"]:
-                        st.success(f"✅ Successfully extracted {result['rows']} rows of data!")
-                        st.dataframe(result["data"], width='stretch')
-                    else:
-                        st.error(f"❌ Scraping failed: {result.get('error', 'Unknown error')}")
+                    # Scrape button for this site
+                    site_id = site["id"]
+                    button_key = f"crypto_scrape_{site_id}"
+                    if st.button("Scrape", key=button_key, type="primary"):
+                        # Process scraping immediately
+                        with st.spinner(f"Scraping {site['name']}... This may take a moment."):
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+                            
+                            status_text.text("Step 1/3: Loading site configuration...")
+                            progress_bar.progress(33)
+                            
+                            result = api.scrape_configured_site(
+                                site_id=site_id,
+                                use_stealth=True,
+                                override_robots=False,
+                            )
+                            
+                            progress_bar.progress(100)
+                            status_text.text("Complete!")
+                            scrape_results[site_id] = (result, site)
+                    
+                    st.markdown("---")
+        
+        # Display results for any site that was scraped
+        for site_id, (result, site) in scrape_results.items():
+            if result["success"]:
+                st.success(f"Successfully extracted {result['rows']} rows of data from {site['name']}!")
+                
+                # Show warnings if any
+                if result["warnings"]:
+                    with st.expander("Validation Warnings", expanded=False):
+                        for warning in result["warnings"]:
+                            st.warning(warning)
+                
+                # Data preview
+                st.subheader(f"Data Preview - {site['name']}")
+                preview_rows = st.slider("Rows to display:", 10, min(100, result["rows"]), 50, key=f"crypto_preview_{site_id}")
+                st.dataframe(result["data"].head(preview_rows), width='stretch')
+                
+                # Download section
+                st.subheader("Download")
+                excel_bytes, filename = api.export_to_excel(result["data"], filename=f"{site_id}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}")
+                
+                if excel_bytes:
+                    st.download_button(
+                        label="Download Excel File",
+                        data=excel_bytes,
+                        file_name=filename,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary",
+                        key=f"crypto_download_{site_id}"
+                    )
+                    st.info(f"File size: {len(excel_bytes) / 1024:.2f} KB")
+                else:
+                    st.error("Failed to generate Excel file")
+            
+            else:
+                st.error(f"Scraping {site['name']} failed: {result['error']}")
+    else:
+        st.info("No crypto data sources configured. Please add crypto sites to websites.yaml.")
 
-with tab4:
-    st.header("📈 Market Sentiment Indicators")
+with tab3:
+    st.header("Market Sentiment Indicators")
     st.markdown("17 indicators from FRED, University of Michigan, and DG ECFIN")
 
     # Check for FRED API key
     fred_api_key = os.getenv("FRED_API_KEY")
     if not fred_api_key:
-        st.warning("⚠️ FRED_API_KEY not found in environment variables. Please set it in your .env file.")
+        st.warning("FRED_API_KEY not found in environment variables. Please set it in your .env file.")
         st.info("Get your API key from: https://fred.stlouisfed.org/docs/api/api_key.html")
     else:
-        st.success("✅ FRED API key found")
+        st.success("FRED API key found")
 
     # Indicator metadata for card display
     INDICATORS = [
@@ -516,7 +399,7 @@ with tab4:
                     st.success(f"✓ Latest: **{latest_value:.2f}** ({latest_date.strftime('%b %Y')})")
 
                 # Expandable section for chart and data
-                with st.expander("📊 View Chart & Data", expanded=False):
+                with st.expander("View Chart & Data", expanded=False):
                     # Chart with constrained zoom
                     if 'chart_data' in data:
                         chart_data = data['chart_data']
@@ -645,13 +528,13 @@ with tab4:
                        s.get("id", "").startswith(("fred_", "umich_", "dg_ecfin_"))]
 
     if sentiment_sites:
-        st.subheader("📊 Market Sentiment Indicators")
+        st.subheader("Market Sentiment Indicators")
         st.caption(f"17 indicators from FRED, University of Michigan, and DG ECFIN")
 
         # Fetch All button
         col1, col2, col3 = st.columns([2, 2, 6])
         with col1:
-            if st.button("🚀 Fetch All Indicators", type="primary", use_container_width=True):
+            if st.button("Fetch All Indicators", type="primary", use_container_width=True):
                 # Mark all indicators as fetching
                 for indicator in INDICATORS:
                     card_key = f"{indicator['id']}_{indicator.get('field', 'main')}"
@@ -686,32 +569,246 @@ with tab4:
         dg_ecfin_indicators = [i for i in INDICATORS if i['source'] == 'DG ECFIN']
 
         # FRED Section
-        st.markdown("### 🇺🇸 FRED Market Sentiment (7 indicators)")
+        st.markdown("### FRED Market Sentiment (7 indicators)")
         for indicator in fred_indicators:
             render_indicator_card(indicator)
 
         st.divider()
 
         # UMich Section
-        st.markdown("### 🎓 University of Michigan Consumer Surveys (5 fields)")
+        st.markdown("### University of Michigan Consumer Surveys (5 fields)")
         for indicator in umich_indicators:
             render_indicator_card(indicator)
 
         st.divider()
 
         # DG ECFIN Section
-        st.markdown("### 🇪🇺 DG ECFIN EU Surveys (5 indicators)")
+        st.markdown("### DG ECFIN EU Surveys (5 indicators)")
         for indicator in dg_ecfin_indicators:
             render_indicator_card(indicator)
     else:
         st.info("No market sentiment indicators configured. Please add them to websites.yaml.")
 
-# Footer
-st.markdown("---")
-st.markdown(
-    "<div style='text-align: center; color: #666666;'>"
-    "Data-Fetch Framework | Financial Data Scraper"
-    "</div>",
-    unsafe_allow_html=True
-)
+with tab4:
+    st.subheader("Dental ETFs Data Sources")
+    st.markdown("""
+    This tab provides access to dental-themed ETF and stock data from multiple sources.
+    Data is scraped in real-time when you click the fetch buttons.
+    """)
+    
+    # Get dental ETF sites from configuration (exclude Yahoo Finance and FinanceCharts from UI)
+    dental_sites = [s for s in sites if s.get("id", "").startswith("dental_") 
+                    and s.get("id") != "dental_yahoo_etf_holdings"
+                    and s.get("id") != "dental_financecharts_performance"]
+    
+    # Initialize session state for dental tab
+    if "dental_results" not in st.session_state:
+        st.session_state.dental_results = {}
+    
+    # Data Source Descriptions
+    DENTAL_SOURCE_INFO = {
+        "dental_swingtradebot_etf_list": {
+            "description": "Lists all ETFs with dental theme exposure and their weighting",
+            "data_points": "Symbol, Name, Grade, % Change, Weighting, Holdings"
+        },
+        "dental_fintel_sic_3843": {
+            "description": "SIC 3843 classified dental equipment and supplies companies",
+            "data_points": "Ticker, Company, Market Cap, Country"
+        },
+        "dental_portfoliopilot_risk_return": {
+            "description": "Risk/return metrics for dental stocks",
+            "data_points": "Ticker, Expected Return, Sharpe, Beta, Vol, P/E, Div Yield"
+        }
+    }
+    
+    if dental_sites:
+        # Display data sources in 2 columns
+        st.subheader("Available Data Sources")
+        cols = st.columns(2)
+        
+        for idx, site in enumerate(dental_sites):
+            site_id = site["id"]
+            info = DENTAL_SOURCE_INFO.get(site_id, {"description": "Dental ETF data", "data_points": "Various"})
+            
+            with cols[idx % 2]:
+                with st.container():
+                    st.markdown(f"### {site['name']}")
+                    st.caption(info['description'])
+                    st.markdown(f"**Data points:** {info['data_points']}")
+                    # Fix: Use the actual page_url from config, not a hardcoded link
+                    page_url = site.get('page_url', '#')
+                    if page_url and page_url != '#':
+                        st.markdown(f"[View Source →]({page_url})")
+                    st.markdown("---")
+        
+        # Fetch Data Section
+        st.subheader("Fetch Dental ETF Data")
+        
+        # Organized button layout - 2x2 grid for better alignment
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("Fetch All Sources", type="primary", key="fetch_all_dental", use_container_width=True):
+                with st.spinner("Fetching all dental ETF data..."):
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    for idx, site in enumerate(dental_sites):
+                        site_id = site["id"]
+                        progress = (idx + 1) / len(dental_sites)
+                        progress_bar.progress(progress)
+                        status_text.text(f"Fetching {site['name']}... ({idx + 1}/{len(dental_sites)})")
+                        
+                        try:
+                            # Standard scrape
+                            result = api.scrape_configured_site(
+                                site_id=site_id,
+                                use_stealth=True,
+                                override_robots=False,
+                            )
+                            
+                            st.session_state.dental_results[site_id] = (result, site)
+                        except Exception as e:
+                            st.session_state.dental_results[site_id] = (
+                                {"success": False, "error": str(e), "data": None, "rows": 0},
+                                site
+                            )
+                    
+                    progress_bar.progress(100)
+                    status_text.text("Complete!")
+        
+        with col2:
+            if st.button("Fetch SwingTradeBot ETF List", key="fetch_swingtradebot", use_container_width=True):
+                site = next((s for s in dental_sites if s["id"] == "dental_swingtradebot_etf_list"), None)
+                if site:
+                    with st.spinner(f"Fetching {site['name']}..."):
+                        try:
+                            result = api.scrape_configured_site(
+                                site_id=site["id"],
+                                use_stealth=True,
+                                override_robots=False,
+                            )
+                            st.session_state.dental_results[site["id"]] = (result, site)
+                        except Exception as e:
+                            st.session_state.dental_results[site["id"]] = (
+                                {"success": False, "error": str(e), "data": None, "rows": 0},
+                                site
+                            )
+        
+        # Second row of buttons
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("Fetch SIC 3843 Companies", key="fetch_fintel", use_container_width=True):
+                site = next((s for s in dental_sites if s["id"] == "dental_fintel_sic_3843"), None)
+                if site:
+                    with st.spinner(f"Fetching {site['name']}..."):
+                        try:
+                            result = api.scrape_configured_site(
+                                site_id=site["id"],
+                                use_stealth=True,
+                                override_robots=False,
+                            )
+                            st.session_state.dental_results[site["id"]] = (result, site)
+                        except Exception as e:
+                            st.session_state.dental_results[site["id"]] = (
+                                {"success": False, "error": str(e), "data": None, "rows": 0},
+                                site
+                            )
+        
+        with col2:
+            if st.button("Fetch Risk/Return Metrics", key="fetch_portfoliopilot", use_container_width=True):
+                site = next((s for s in dental_sites if s["id"] == "dental_portfoliopilot_risk_return"), None)
+                if site:
+                    with st.spinner(f"Fetching {site['name']}..."):
+                        try:
+                            result = api.scrape_configured_site(
+                                site_id=site["id"],
+                                use_stealth=True,
+                                override_robots=False,
+                            )
+                            st.session_state.dental_results[site["id"]] = (result, site)
+                        except Exception as e:
+                            st.session_state.dental_results[site["id"]] = (
+                                {"success": False, "error": str(e), "data": None, "rows": 0},
+                                site
+                            )
+        
+        # Display Results Section
+        if st.session_state.dental_results:
+            st.subheader("Results")
+            
+            # Summary metrics
+            successful = sum(1 for r, _ in st.session_state.dental_results.values() if r.get("success"))
+            total = len(st.session_state.dental_results)
+            st.info(f"Successfully fetched: {successful}/{total} data sources")
+            
+            # Display each result
+            for site_id, (result, site) in st.session_state.dental_results.items():
+                info = DENTAL_SOURCE_INFO.get(site_id, {})
+                
+                with st.expander(f"{site['name']}", expanded=result.get("success", False)):
+                    if result.get("success") and result.get("data") is not None and not result["data"].empty:
+                        st.success(f"Extracted {result['rows']} rows")
+                        
+                        # Data preview
+                        preview_rows = st.slider(
+                            "Rows to display:",
+                            5, min(50, result["rows"]), 10,
+                            key=f"dental_preview_{site_id}"
+                        )
+                        st.dataframe(result["data"].head(preview_rows), width='stretch')
+                        
+                        # Download button
+                        excel_bytes, filename = api.export_to_excel(
+                            result["data"],
+                            filename=f"dental_{site_id}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}"
+                        )
+                        
+                        if excel_bytes:
+                            st.download_button(
+                                label=f"Download {site['name']} Excel",
+                                data=excel_bytes,
+                                file_name=filename,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key=f"dental_download_{site_id}"
+                            )
+                    else:
+                        st.error(f"Failed: {result.get('error', 'Unknown error')}")
+            
+            # Combined Export Option
+            st.subheader("Export All Data")
+            
+            # Gather all successful dataframes
+            all_dfs = {}
+            for site_id, (result, site) in st.session_state.dental_results.items():
+                if result.get("success") and result.get("data") is not None and not result["data"].empty:
+                    # Use short name for sheet
+                    sheet_name = site_id.replace("dental_", "")[:31]  # Excel sheet name limit
+                    all_dfs[sheet_name] = result["data"]
+            
+            if all_dfs:
+                if st.button("Export All to Single Excel (Multiple Sheets)", key="export_all_dental"):
+                    try:
+                        # Combine into multi-sheet Excel
+                        excel_bytes, filename = api.export_dental_to_excel(
+                            all_dfs,
+                            filename=f"dental_etf_all_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}"
+                        )
+                        if excel_bytes:
+                            st.success("Combined Excel file generated!")
+                            st.download_button(
+                                label="Download Combined Excel",
+                                data=excel_bytes,
+                                file_name=filename,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key="download_combined_dental"
+                            )
+                        else:
+                            st.error("Failed to generate combined Excel file")
+                    except Exception as e:
+                        st.error(f"Export failed: {str(e)}")
+    else:
+        st.info("No dental ETF data sources configured. Please add them to websites.yaml with IDs starting with 'dental_'.")
+
 

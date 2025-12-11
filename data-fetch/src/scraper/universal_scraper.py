@@ -132,10 +132,18 @@ class UniversalScraper(BaseScraper):
             # Site-specific waiting strategies
             wait_for_selector = None
             if "yahoo.com" in url or "finance.yahoo.com" in url:
-                # Yahoo Finance - wait for table with multiple tbody rows (at least 2 data rows)
-                wait_for_selector = "table tbody tr:nth-child(2), table[data-test='historical-prices'] tbody tr:nth-child(2)"
+                if "/holdings/" in url:
+                    # Yahoo Finance holdings - wait for holdings table
+                    wait_for_selector = "table tbody tr, table[data-test='holdings-table'] tbody tr"
+                else:
+                    # Yahoo Finance - wait for table with multiple tbody rows (at least 2 data rows)
+                    wait_for_selector = "table tbody tr:nth-child(2), table[data-test='historical-prices'] tbody tr:nth-child(2)"
                 # Use longer timeout for Yahoo Finance as tables load dynamically
-                wait_timeout = max(wait_timeout, 20000)  # 20 seconds for Yahoo Finance
+                wait_timeout = max(wait_timeout, 60000)  # 60 seconds for Yahoo Finance (increased from 20s)
+            elif "swingtradebot.com" in url:
+                # SwingTradeBot - wait for table or data container (may be JS-rendered)
+                wait_for_selector = "table, .table, [class*='table'], [class*='data-table']"
+                wait_timeout = max(wait_timeout, 15000)  # 15 seconds for SwingTradeBot
             elif "bloomberg.com" in url:
                 wait_for_selector = "table, [data-table], .data-table"
             elif "reuters.com" in url:
@@ -157,19 +165,19 @@ class UniversalScraper(BaseScraper):
             if ("yahoo.com" in url or "finance.yahoo.com" in url) and not page_result.error:
                 # Wait a bit more and check if table has multiple rows
                 import asyncio
-                await asyncio.sleep(2)  # Additional wait for dynamic content
+                await asyncio.sleep(3)  # Additional wait for dynamic content
                 
                 # Try to get updated HTML if we have access to the page
                 try:
                     # Create a new page to get fresh content with table data
                     new_page = await browser._context.new_page()
-                    await new_page.goto(url, timeout=30000, wait_until="networkidle")
+                    await new_page.goto(url, timeout=60000, wait_until="domcontentloaded")  # Increased timeout, use domcontentloaded instead of networkidle
                     # Wait specifically for table rows
                     try:
-                        await new_page.wait_for_selector("table tbody tr:nth-child(2)", timeout=10000)
+                        await new_page.wait_for_selector("table tbody tr:nth-child(2)", timeout=20000)  # Increased timeout
                     except Exception:
                         pass  # Continue anyway
-                    await asyncio.sleep(2)  # Wait for JS to render
+                    await asyncio.sleep(3)  # Wait for JS to render
                     page_result.html = await new_page.content()
                     await new_page.close()
                     self.logger.debug("Refreshed HTML content for Yahoo Finance table")
@@ -177,9 +185,36 @@ class UniversalScraper(BaseScraper):
                     self.logger.debug(f"Could not refresh page content: {e}")
             
             # If no table found, wait a bit more and try to use smart waiting
+            # Check if we have tables in the HTML
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(page_result.html, "lxml")
+            tables = soup.find_all("table")
+            
+            # Special handling for SwingTradeBot - may need longer wait for JS-rendered content
+            if "swingtradebot.com" in url and (not tables or len(tables) == 0):
+                self.logger.info("SwingTradeBot: No tables found initially, waiting for JavaScript-rendered content...")
+                import asyncio
+                await asyncio.sleep(5)  # Wait longer for JS to render
+                
+                # Try to get updated HTML by creating a new page with longer wait
+                try:
+                    new_page = await browser._context.new_page()
+                    await new_page.goto(url, timeout=60000, wait_until="domcontentloaded")
+                    # Wait for table to appear
+                    try:
+                        await new_page.wait_for_selector("table", timeout=10000)
+                    except Exception:
+                        pass  # Continue anyway
+                    await asyncio.sleep(5)  # Additional wait for JS rendering
+                    page_result.html = await new_page.content()
+                    await new_page.close()
+                    self.logger.debug("Refreshed HTML content for SwingTradeBot")
+                except Exception as e:
+                    self.logger.debug(f"Could not reload SwingTradeBot page content: {e}")
+            
+            # If no table found, wait a bit more and try to use smart waiting
             if is_financial_quote and not page_result.error:
-                # Check if we have tables in the HTML
-                from bs4 import BeautifulSoup
+                # Re-check tables after potential refresh
                 soup = BeautifulSoup(page_result.html, "lxml")
                 tables = soup.find_all("table")
                 
@@ -302,13 +337,76 @@ class UniversalScraper(BaseScraper):
             # This will be handled by JS extraction and endpoint discovery
             pass
         
-        # Try discovered candidate endpoints
-        if discovery.candidate_endpoints:
+        # For Yahoo Finance holdings pages, skip API endpoints and prioritize table extraction
+        # The quote API endpoint is not useful for holdings data
+        skip_api_for_holdings = "/holdings/" in url and ("yahoo.com" in url or "finance.yahoo.com" in url)
+        
+        # Try discovered candidate endpoints (skip for holdings pages)
+        if discovery.candidate_endpoints and not skip_api_for_holdings:
             for endpoint in discovery.candidate_endpoints:
+                # #region agent log
+                import json
+                import os
+                try:
+                    log_data = {
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "A",
+                        "location": "universal_scraper.py:306",
+                        "message": "Evaluating candidate endpoint",
+                        "data": {
+                            "url": endpoint.url[:100],
+                            "confidence_score": endpoint.confidence_score,
+                            "content_type": endpoint.content_type,
+                            "detected_structure": endpoint.detected_structure
+                        },
+                        "timestamp": int(__import__("time").time() * 1000)
+                    }
+                    with open("/Users/apple/Desktop/2025/data2dreams/ragz/.cursor/debug.log", "a") as f:
+                        f.write(json.dumps(log_data) + "\n")
+                except: pass
+                # #endregion
+                
                 # Check content type - CandidateEndpoint doesn't have is_json, check content_type
                 content_type = (endpoint.content_type or "").lower()
                 # Also check URL patterns for JSON endpoints
                 url_lower = endpoint.url.lower()
+                
+                # Filter out analytics/tracking endpoints more aggressively
+                tracking_indicators = [
+                    "analytics", "tracking", "pixel", "beacon", "collect",
+                    "google-analytics", "gtm", "clarity", "hotjar",
+                    "userstats", "adservice", "doubleclick", "googlesyndication",
+                    "facebook.com/tr", "segment", "amplitude", "mixpanel",
+                    "criteo", "gum.criteo", "prebid", "bid", "adapter"
+                ]
+                is_tracking = any(indicator in url_lower for indicator in tracking_indicators)
+                
+                # For Yahoo Finance holdings pages, also skip quote API endpoints
+                if skip_api_for_holdings and "/quote" in url_lower:
+                    is_tracking = True  # Treat quote API as not useful for holdings
+                
+                # #region agent log
+                try:
+                    log_data = {
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "A",
+                        "location": "universal_scraper.py:330",
+                        "message": "Tracking check result",
+                        "data": {
+                            "url": endpoint.url[:100],
+                            "is_tracking": is_tracking
+                        },
+                        "timestamp": int(__import__("time").time() * 1000)
+                    }
+                    with open("/Users/apple/Desktop/2025/data2dreams/ragz/.cursor/debug.log", "a") as f:
+                        f.write(json.dumps(log_data) + "\n")
+                except: pass
+                # #endregion
+                
+                if is_tracking:
+                    continue  # Skip tracking endpoints
                 
                 # More lenient JSON detection - check multiple indicators
                 is_json_endpoint = (
@@ -384,10 +482,51 @@ class UniversalScraper(BaseScraper):
                 self.logger.warning(f"JavaScript extraction failed: {e}, trying next strategy")
         
         # Strategy 3: Try HTML table extraction
+        # For Yahoo Finance holdings pages, prioritize table extraction over API
         if discovery.page_load_result and discovery.page_load_result.html:
             try:
                 self.logger.info("Trying HTML table extraction")
                 html = discovery.page_load_result.html
+                
+                # For Yahoo Finance holdings pages, check for tables first
+                if "/holdings/" in url and ("yahoo.com" in url or "finance.yahoo.com" in url):
+                    # Look specifically for holdings table - Yahoo Finance uses various structures
+                    from bs4 import BeautifulSoup
+                    soup = BeautifulSoup(html, "lxml")
+                    # Try multiple selectors for holdings table
+                    holdings_table = None
+                    # Try data-test attribute first
+                    holdings_table = soup.find("table", {"data-test": "holdings-table"})
+                    if not holdings_table:
+                        # Try finding table with "Holdings" text nearby
+                        for table in soup.find_all("table"):
+                            # Check if table has text indicating it's holdings
+                            table_text = table.get_text().lower()
+                            if any(keyword in table_text for keyword in ["holdings", "symbol", "name", "% assets", "shares"]):
+                                tbody = table.find("tbody")
+                                if tbody and len(tbody.find_all("tr")) > 1:  # At least 2 rows (header + data)
+                                    holdings_table = table
+                                    break
+                    # If still not found, try any table with multiple rows
+                    if not holdings_table:
+                        for table in soup.find_all("table"):
+                            tbody = table.find("tbody")
+                            if tbody:
+                                rows = tbody.find_all("tr")
+                                if len(rows) > 1:  # Has data rows
+                                    holdings_table = table
+                                    break
+                    
+                    if holdings_table:
+                        tbody = holdings_table.find("tbody")
+                        if tbody and len(tbody.find_all("tr")) > 0:
+                            self.logger.info(f"Found Yahoo Finance holdings table with {len(tbody.find_all('tr'))} rows")
+                            self._used_strategy = "dom_table"
+                            return {
+                                "type": "dom_table",
+                                "content": html,
+                                "content_type": "text/html",
+                            }
                 
                 # For Yahoo Finance and similar sites, try to wait for table data if needed
                 if "yahoo.com" in url or "finance.yahoo.com" in url:
@@ -434,9 +573,32 @@ class UniversalScraper(BaseScraper):
                                 "content": html,
                                 "content_type": "text/html",
                             }
-                else:
-                    # If no tables found, try to extract from div-based data structures
-                    # (some sites use divs styled as tables)
+                
+                # Special handling for SwingTradeBot - may use JS-rendered tables or div structures
+                if "swingtradebot.com" in url:
+                    self.logger.info("SwingTradeBot: No standard tables found, checking for JS-rendered or div-based structures...")
+                    from bs4 import BeautifulSoup
+                    soup = BeautifulSoup(html, "lxml")
+                    # Check if page is very small (might be redirect or error)
+                    if len(html) < 2000:
+                        self.logger.warning(f"SwingTradeBot: HTML is very small ({len(html)} bytes), may need longer wait for JS rendering")
+                        # Return empty to trigger retry with longer wait
+                        return {
+                            "type": "dom_table",
+                            "content": html,
+                            "content_type": "text/html",
+                        }
+                    # Look for data in divs or other structures
+                    # SwingTradeBot may use React/Vue components
+                    data_containers = soup.find_all(["div", "section"], class_=re.compile(
+                        r"table|data|etf|list|row", re.I
+                    ))
+                    if data_containers:
+                        self.logger.info(f"Found {len(data_containers)} potential data containers on SwingTradeBot")
+                
+                # If no tables found, try to extract from div-based data structures
+                # (some sites use divs styled as tables)
+                if not tables:
                     self.logger.info("No standard tables found, checking for div-based data structures...")
                     from bs4 import BeautifulSoup
                     soup = BeautifulSoup(html, "lxml")

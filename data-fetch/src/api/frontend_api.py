@@ -34,6 +34,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.scraper.universal_scraper import UniversalScraper
+from src.scraper.dental_etf_scraper import DentalETFScraper
 from src.utils.config_manager import ConfigManager
 from src.pipeline.pipeline_runner import PipelineRunner, PipelineResult
 from src.exporter.excel_exporter import ExcelExporter
@@ -251,4 +252,161 @@ class FrontendAPI:
                     "source": site_id,
                 },
             }
+    
+    def scrape_dental_source(
+        self,
+        site_id: str,
+        etf_symbol: Optional[str] = None,
+        ticker: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Scrape dental ETF data sources with dynamic URL construction.
+        
+        Args:
+            site_id: Site ID from configuration
+            etf_symbol: ETF symbol for Yahoo Finance holdings (e.g., "IHI")
+            ticker: Stock ticker (deprecated, not currently used)
+        
+        Returns:
+            Dictionary with result data, status, and metadata
+        """
+        try:
+            dental_scraper = DentalETFScraper(
+                config_manager=self.config_manager,
+                use_stealth=True,
+                headless=True,
+            )
+            
+            # Handle Yahoo Finance ETF holdings
+            if site_id == "dental_yahoo_etf_holdings" and etf_symbol:
+                result = dental_scraper.scrape_yahoo_etf_holdings(etf_symbol)
+                return {
+                    "success": result.success,
+                    "data": result.data,
+                    "rows": result.rows,
+                    "columns": list(result.data.columns) if result.data is not None else [],
+                    "warnings": [],
+                    "error": result.error,
+                    "metadata": {
+                        "site_id": site_id,
+                        "symbol": result.symbol,
+                        "source": f"Yahoo Finance ({etf_symbol})",
+                    },
+                }
+            
+            # Fallback to standard configured site scraping
+            else:
+                return self.scrape_configured_site(
+                    site_id=site_id,
+                    use_stealth=True,
+                    override_robots=False,
+                )
+        
+        except Exception as e:
+            logger.error(f"Error scraping dental source: {e}")
+            return {
+                "success": False,
+                "data": None,
+                "rows": 0,
+                "columns": [],
+                "warnings": [],
+                "error": str(e),
+                "metadata": {
+                    "site_id": site_id,
+                    "symbol": etf_symbol or ticker,
+                    "source": site_id,
+                },
+            }
+    
+    def export_dental_to_excel(
+        self,
+        dataframes: Dict[str, Any],
+        filename: Optional[str] = None,
+    ) -> Tuple[Optional[bytes], Optional[str]]:
+        """
+        Export multiple dental DataFrames to a multi-sheet Excel file.
+        
+        Args:
+            dataframes: Dictionary mapping sheet names to DataFrames
+            filename: Optional filename (without extension)
+        
+        Returns:
+            Tuple of (excel_bytes, filename)
+        """
+        import tempfile
+        from pathlib import Path
+        import pandas as pd
+        
+        try:
+            if filename is None:
+                filename = f"dental_etf_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            # Ensure .xlsx extension
+            if not filename.endswith(".xlsx"):
+                filename += ".xlsx"
+            
+            # Create temporary file
+            with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp_file:
+                tmp_path = Path(tmp_file.name)
+            
+            try:
+                # Create Excel writer with multiple sheets
+                with pd.ExcelWriter(tmp_path, engine="openpyxl") as writer:
+                    for sheet_name, df in dataframes.items():
+                        if df is not None and not df.empty:
+                            # Truncate sheet name to 31 chars (Excel limit)
+                            safe_name = sheet_name[:31]
+                            df.to_excel(writer, sheet_name=safe_name, index=False)
+                            
+                            # Format the worksheet
+                            worksheet = writer.sheets[safe_name]
+                            self._format_worksheet(worksheet, df)
+                
+                # Read file as bytes
+                with open(tmp_path, "rb") as f:
+                    excel_bytes = f.read()
+                
+                # Clean up temp file
+                tmp_path.unlink()
+                
+                logger.info(f"Exported {len(dataframes)} sheets to memory ({len(excel_bytes)} bytes)")
+                return excel_bytes, filename
+            
+            except Exception as e:
+                # Clean up on error
+                if tmp_path.exists():
+                    tmp_path.unlink()
+                raise e
+        
+        except Exception as e:
+            logger.error(f"Error exporting dental data to Excel: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None, None
+    
+    def _format_worksheet(self, worksheet, df):
+        """Apply formatting to a worksheet."""
+        from openpyxl.utils import get_column_letter
+        from openpyxl.styles import Font, PatternFill
+        
+        # Auto-fit column widths
+        for idx, col in enumerate(df.columns, 1):
+            max_length = max(
+                len(str(col)),
+                df[col].astype(str).str.len().max() if len(df) > 0 else 0
+            )
+            # Cap width at 50 characters
+            adjusted_width = min(max_length + 2, 50)
+            worksheet.column_dimensions[get_column_letter(idx)].width = adjusted_width
+        
+        # Format header row
+        header_font = Font(bold=True)
+        header_fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+        
+        for cell in worksheet[1]:
+            cell.font = header_font
+            cell.fill = header_fill
+        
+        # Freeze header row
+        worksheet.freeze_panes = "A2"
 

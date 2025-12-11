@@ -777,3 +777,117 @@ sites:
       notes: "Switched from Invezz to CoinGlass for more accurate liquidations data. Browser-based extraction."
     rate_limit: 5.0
 
+  # ============================================
+  # DENTAL ETFs DATA SOURCES
+  # ============================================
+
+  # 1. SwingTradeBot - Dentistry ETF List
+  - id: dental_swingtradebot_etf_list
+    name: "SwingTradeBot - Dentistry ETF List"
+    base_url: "https://swingtradebot.com"
+    page_url: "https://swingtradebot.com/etfs-by-keyword/4628-dentistry"
+    extraction_strategy: "dom_table"
+    data_source:
+      type: "table"
+      selector: "table"
+    field_mappings:
+      symbol: "Symbol"
+      name: "Name"
+      grade: "Grade"
+      pct_change: "% Change"
+      weighting: "Weighting"
+      holdings: "Holdings"
+    robots_policy:
+      status: "UNKNOWN"
+      last_checked: null
+      override_approved: false
+    metadata:
+      created: "2025-01-01T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+      requires_subscription: false
+      notes: "Lists all ETFs that hold at least one dentistry stock with dental theme weighting. Paginated HTML table."
+    rate_limit: 2.0
+
+  # 2. Yahoo Finance - ETF Holdings (Template - user selects ETF)
+  - id: dental_yahoo_etf_holdings
+    name: "Yahoo Finance - ETF Holdings"
+    base_url: "https://finance.yahoo.com"
+    page_url: "https://finance.yahoo.com/quote/IHI/holdings/"
+    extraction_strategy: "dom_table"
+    data_source:
+      type: "table"
+      selector: "table"
+      url_template: "https://finance.yahoo.com/quote/{etf_symbol}/holdings/"
+    field_mappings:
+      symbol: "Symbol"
+      name: "Name"
+      weight: "% Assets"
+      shares: "Shares"
+    robots_policy:
+      status: "UNKNOWN"
+      last_checked: null
+      override_approved: false
+    metadata:
+      created: "2025-01-01T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+      requires_subscription: false
+      notes: "ETF constituent holdings with weights. User selects ETF (e.g., IHI, XHE, LGHT). Can loop over multiple ETFs."
+    rate_limit: 2.0
+
+  # 3. Fintel - SIC 3843 Dental Equipment & Supplies Companies
+  - id: dental_fintel_sic_3843
+    name: "Fintel - Dental Equipment Companies (SIC 3843)"
+    base_url: "https://fintel.io"
+    page_url: "https://fintel.io/industry/list/dental-equipment-and-supplies"
+    extraction_strategy: "dom_table"
+    data_source:
+      type: "table"
+      selector: "table"
+    field_mappings:
+      ticker: "Ticker"
+      company: "Company"
+      market_cap: "Market Cap"
+      country: "Country"
+    robots_policy:
+      status: "UNKNOWN"
+      last_checked: null
+      override_approved: false
+    metadata:
+      created: "2025-01-01T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+      requires_subscription: false
+      notes: "Regulator-style industry list of publicly traded Dental Equipment and Supplies companies (SIC code 3843)."
+    rate_limit: 2.0
+
+  # 4. PortfolioPilot - Dental Stocks Risk/Return Metrics
+  - id: dental_portfoliopilot_risk_return
+    name: "PortfolioPilot - Dental Stocks Risk/Return"
+    base_url: "https://portfoliopilot.com"
+    page_url: "https://portfoliopilot.com/explore/stock-screener/dental-stocks"
+    extraction_strategy: "dom_table"
+    data_source:
+      type: "table"
+      selector: "table"
+    field_mappings:
+      ticker: "Ticker"
+      expected_return: "Expected Return"
+      sharpe_ratio: "Sharpe"
+      beta: "Beta"
+      volatility: "Volatility"
+      pe_ratio: "P/E"
+      dividend_yield: "Dividend Yield"
+    robots_policy:
+      status: "UNKNOWN"
+      last_checked: null
+      override_approved: false
+    metadata:
+      created: "2025-01-01T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+      requires_subscription: false
+      notes: "Risk/return dashboard for curated dental stocks (HSIC, XRAY, NVST, ALGN, etc.). Standard HTML table with some marketing JS."
+    rate_limit: 2.0
+

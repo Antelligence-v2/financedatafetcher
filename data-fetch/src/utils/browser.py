@@ -340,8 +340,15 @@ class BrowserManager:
         start_time = asyncio.get_event_loop().time()
         error = None
         
+        # Adjust timeout for slow-loading sites
+        page_timeout = self.timeout
+        wait_until = "networkidle"
+        if "yahoo.com" in url or "finance.yahoo.com" in url:
+            page_timeout = 60000  # 60 seconds for Yahoo Finance
+            wait_until = "domcontentloaded"  # Use domcontentloaded instead of networkidle
+        
         try:
-            await page.goto(url, timeout=self.timeout, wait_until="networkidle")
+            await page.goto(url, timeout=page_timeout, wait_until=wait_until)
             
             # Wait for selector if specified
             if wait_for_selector:

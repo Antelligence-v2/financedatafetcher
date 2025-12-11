@@ -48,7 +48,10 @@ class NetworkInspector:
         "analytics", "tracking", "pixel", "beacon", "collect",
         "facebook", "google-analytics", "clarity", "hotjar",
         "segment", "amplitude", "mixpanel", "gtm", "recaptcha",
-        "cookie", "consent", "ads", "advertising",
+        "cookie", "consent", "ads", "advertising", "userstats",
+        "adservice", "doubleclick", "googlesyndication", "sodar",
+        "adtrafficquality", "ep1.adtrafficquality", "getconfig",
+        "criteo", "gum.criteo", "prebid", "bid", "adapter",
     ]
     
     def __init__(self):
@@ -134,10 +137,10 @@ class NetworkInspector:
             if keyword in url_lower:
                 score += 2.0
         
-        # Check for tracking keywords (negative)
+        # Check for tracking keywords (negative - more aggressive)
         for keyword in self.TRACKING_KEYWORDS:
             if keyword in url_lower:
-                score -= 2.0
+                score -= 10.0  # Much stronger penalty to ensure tracking endpoints are filtered out
         
         # Content type bonus
         if request.is_json:

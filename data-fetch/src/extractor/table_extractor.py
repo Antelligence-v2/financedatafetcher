@@ -47,6 +47,27 @@ class TableExtractor:
         soup = BeautifulSoup(html, "lxml")
         tables = soup.find_all("table")
         
+        # #region agent log
+        import json
+        import os
+        try:
+            log_data = {
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "B",
+                "location": "table_extractor.py:47",
+                "message": "Table extraction - found tables count",
+                "data": {
+                    "tables_found": len(tables),
+                    "html_length": len(html)
+                },
+                "timestamp": int(__import__("time").time() * 1000)
+            }
+            with open("/Users/apple/Desktop/2025/data2dreams/ragz/.cursor/debug.log", "a") as f:
+                f.write(json.dumps(log_data) + "\n")
+        except: pass
+        # #endregion
+        
         table_infos = []
         
         for i, table in enumerate(tables):
