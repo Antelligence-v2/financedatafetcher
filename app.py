@@ -186,248 +186,14 @@ def get_rss_client():
 rss_client = get_rss_client()
 
 # Main content
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "URL Scraper",
-    "Fintech News",
+tab1, tab2, tab3, tab4 = st.tabs([
     "Crypto",
     "Market Sentiment",
-    "Dental ETFs"
+    "Dental ETFs",
+    "Fintech News"
 ])
 
 with tab1:
-    st.header("URL Scraper")
-    st.markdown("Scrape data from any website URL. The system will automatically detect the data format and export as Excel (for tables) or DOCX (for articles).")
-    
-    # URL input
-    url_input = st.text_input(
-        "Enter URL to scrape:",
-        placeholder="https://example.com/data",
-        key="url_scraper_input"
-    )
-    
-    # Options
-    col_options1, col_options2 = st.columns(2)
-    with col_options1:
-        use_stealth = st.checkbox("Use Stealth Mode", value=True, key="url_scraper_stealth")
-    with col_options2:
-        override_robots = st.checkbox("Override robots.txt", value=False, key="url_scraper_robots")
-    
-    # Export format override
-    export_format = st.radio(
-        "Export Format:",
-        ["Auto-detect", "Force Excel", "Force DOCX"],
-        key="url_scraper_format"
-    )
-    
-    # Scrape button
-    if st.button("Scrape URL", type="primary", key="url_scraper_button"):
-        if url_input:
-            if not url_input.startswith(("http://", "https://")):
-                st.error("Please enter a valid URL starting with http:// or https://")
-            else:
-                with st.spinner("Scraping URL... This may take a moment."):
-                    # Try structured data extraction first
-                    result = api.scrape_url(
-                        url=url_input,
-                        use_stealth=use_stealth,
-                        override_robots=override_robots,
-                    )
-                    
-                    # Determine export format
-                    should_export_excel = False
-                    should_export_docx = False
-                    article_data = None
-                    
-                    if export_format == "Force Excel":
-                        should_export_excel = True
-                    elif export_format == "Force DOCX":
-                        should_export_docx = True
-                        # Extract article
-                        article_data = api.extract_article(
-                            url=url_input,
-                            use_stealth=use_stealth,
-                            override_robots=override_robots,
-                        )
-                    else:  # Auto-detect
-                        if result["success"] and result["rows"] > 0 and len(result["columns"]) >= 2:
-                            # Structured data -> Excel
-                            should_export_excel = True
-                        else:
-                            # Article-like content -> DOCX
-                            should_export_docx = True
-                            article_data = api.extract_article(
-                                url=url_input,
-                                use_stealth=use_stealth,
-                                override_robots=override_robots,
-                            )
-                    
-                    # Store results in session state
-                    st.session_state.url_scraper_result = {
-                        "url": url_input,
-                        "structured_result": result,
-                        "article_data": article_data,
-                        "should_export_excel": should_export_excel,
-                        "should_export_docx": should_export_docx,
-                    }
-    
-    # Display results
-    if "url_scraper_result" in st.session_state:
-        result_data = st.session_state.url_scraper_result
-        
-        # Show structured data if available
-        if result_data["should_export_excel"] and result_data["structured_result"]["success"]:
-            st.success(f"✅ Successfully extracted {result_data['structured_result']['rows']} rows of structured data!")
-            
-            # Data preview
-            st.subheader("Data Preview")
-            preview_data = result_data["structured_result"]["data"]
-            display_data = format_dataframe_for_display(preview_data.head(50))
-            st.dataframe(display_data, width='stretch')
-            
-            # Download Excel
-            excel_bytes, filename = api.export_to_excel(
-                result_data["structured_result"]["data"],
-                filename=f"scraped_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}"
-            )
-            
-            if excel_bytes:
-                st.download_button(
-                    label="📥 Download Excel File",
-                    data=excel_bytes,
-                    file_name=filename,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary",
-                    key="url_scraper_download_excel"
-                )
-        
-        # Show article data if available
-        if result_data["should_export_docx"] and result_data["article_data"]:
-            article = result_data["article_data"]
-            if article.get("success"):
-                st.success("✅ Successfully extracted article content!")
-                
-                # Article preview
-                st.subheader("Article Preview")
-                st.markdown(f"**Title:** {article.get('title', 'Untitled')}")
-                if article.get('author'):
-                    st.markdown(f"**Author:** {article.get('author')}")
-                if article.get('published_at'):
-                    st.markdown(f"**Published:** {article.get('published_at')}")
-                
-                # Show first 500 characters of text
-                text = article.get('text', '')
-                if text:
-                    preview_text = text[:500] + "..." if len(text) > 500 else text
-                    with st.expander("Article Text Preview"):
-                        st.text(preview_text)
-                
-                # Download DOCX
-                docx_bytes, filename = api.export_to_docx(
-                    article,
-                    filename=f"article_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}"
-                )
-                
-                if docx_bytes:
-                    st.download_button(
-                        label="📥 Download DOCX File",
-                        data=docx_bytes,
-                        file_name=filename,
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        type="primary",
-                        key="url_scraper_download_docx"
-                    )
-            else:
-                st.error(f"❌ Article extraction failed: {article.get('error', 'Unknown error')}")
-        
-        # Show error if both failed
-        if (not result_data["should_export_excel"] or not result_data["structured_result"]["success"]) and \
-           (not result_data["should_export_docx"] or not result_data["article_data"] or not result_data["article_data"].get("success")):
-            st.error("❌ Scraping failed. Please check the URL and try again.")
-
-with tab2:
-    st.header("📰 Fintech News")
-    st.markdown("Stay updated with the latest financial technology news and market insights.")
-    
-    if not news_sources:
-        st.warning("No news sources configured. Please check config/news_sources.yaml")
-    else:
-        # Layout: 2/3 for sources, 1/3 for headlines
-        col_left, col_right = st.columns([2, 1])
-        
-        with col_left:
-            st.subheader("News Sources")
-            
-            # Multi-select for sources
-            source_names = [s.get('name', 'Unknown') for s in news_sources]
-            selected_sources = st.multiselect(
-                "Select news sources:",
-                source_names,
-                default=source_names[:4],  # Default to first 4
-                key="news_sources_select"
-            )
-            
-            # Display selected sources
-            if selected_sources:
-                st.markdown("---")
-                for source in news_sources:
-                    if source.get('name') in selected_sources:
-                        st.markdown(f"### {source.get('name', 'Unknown')}")
-                        st.caption(source.get('description', 'No description'))
-                        homepage = source.get('homepage_url', '#')
-                        if homepage != '#':
-                            st.markdown(f"[Visit Website →]({homepage})")
-                        st.markdown("---")
-        
-        with col_right:
-            st.subheader("Latest Headlines")
-            
-            # Fetch headlines button
-            if st.button("🔄 Refresh Headlines", key="refresh_headlines"):
-                # Clear cache to force refresh
-                st.cache_data.clear()
-                st.rerun()
-            
-            # Fetch headlines for selected sources
-            if selected_sources:
-                with st.spinner("Fetching latest headlines..."):
-                    # Prepare feeds list
-                    feeds_to_fetch = [
-                        {
-                            'rss_url': s.get('rss_url'),
-                            'source_name': s.get('name')
-                        }
-                        for s in news_sources
-                        if s.get('name') in selected_sources and s.get('rss_url')
-                    ]
-                    
-                    # Fetch headlines (cached)
-                    # Convert to hashable format for caching
-                    feeds_key = tuple(sorted([(f['rss_url'], f['source_name']) for f in feeds_to_fetch]))
-                    
-                    @st.cache_data(ttl=300)  # Cache for 5 minutes
-                    def fetch_headlines_cached(feeds_key_tuple):
-                        # Convert back to list of dicts
-                        feeds_list = [{'rss_url': url, 'source_name': name} for url, name in feeds_key_tuple]
-                        return rss_client.fetch_multiple_feeds(feeds_list, max_headlines=5)
-                    
-                    headlines = fetch_headlines_cached(feeds_key)
-                    
-                    if headlines:
-                        for idx, headline in enumerate(headlines):
-                            with st.container():
-                                st.markdown(f"**{headline.title}**")
-                                st.caption(f"📰 {headline.source_name}")
-                                if headline.published_at:
-                                    st.caption(f"🕒 {headline.published_at.strftime('%Y-%m-%d %H:%M')}")
-                                st.markdown(f"[Read more →]({headline.link})")
-                                if idx < len(headlines) - 1:
-                                    st.markdown("---")
-                    else:
-                        st.info("No headlines found. Please check your internet connection and RSS feed URLs.")
-            else:
-                st.info("Select news sources from the left to see headlines.")
-
-with tab3:
     st.subheader("Crypto Data Sources")
     st.markdown("""
     This tab provides access to cryptocurrency-related data sources including exchange volumes, 
@@ -544,7 +310,7 @@ with tab3:
     else:
         st.info("No crypto data sources configured. Please add crypto sites to websites.yaml.")
 
-with tab4:
+with tab2:
     st.header("Market Sentiment Indicators")
     st.markdown("17 indicators from FRED, University of Michigan, and DG ECFIN")
 
@@ -824,7 +590,7 @@ with tab4:
     else:
         st.info("No market sentiment indicators configured. Please add them to websites.yaml.")
 
-with tab5:
+with tab3:
     st.subheader("Dental ETFs Data Sources")
     st.markdown("""
     This tab provides access to dental-themed ETF and stock data from multiple sources.
@@ -1033,5 +799,88 @@ with tab5:
                         st.error(f"Export failed: {str(e)}")
     else:
         st.info("No dental ETF data sources configured. Please add them to websites.yaml with IDs starting with 'dental_'.")
+
+with tab4:
+    st.header("📰 Fintech News")
+    st.markdown("Stay updated with the latest financial technology news and market insights.")
+    
+    if not news_sources:
+        st.warning("No news sources configured. Please check config/news_sources.yaml")
+    else:
+        # Layout: 2/3 for sources, 1/3 for headlines
+        col_left, col_right = st.columns([2, 1])
+        
+        with col_left:
+            st.subheader("News Sources")
+            
+            # Multi-select for sources
+            source_names = [s.get('name', 'Unknown') for s in news_sources]
+            selected_sources = st.multiselect(
+                "Select news sources:",
+                source_names,
+                default=source_names[:4],  # Default to first 4
+                key="news_sources_select"
+            )
+            
+            # Display selected sources
+            if selected_sources:
+                st.markdown("---")
+                for source in news_sources:
+                    if source.get('name') in selected_sources:
+                        st.markdown(f"### {source.get('name', 'Unknown')}")
+                        st.caption(source.get('description', 'No description'))
+                        homepage = source.get('homepage_url', '#')
+                        if homepage != '#':
+                            st.markdown(f"[Visit Website →]({homepage})")
+                        st.markdown("---")
+        
+        with col_right:
+            st.subheader("Latest Headlines")
+            
+            # Fetch headlines button
+            if st.button("🔄 Refresh Headlines", key="refresh_headlines"):
+                # Clear cache to force refresh
+                st.cache_data.clear()
+                st.rerun()
+            
+            # Fetch headlines for selected sources
+            if selected_sources:
+                with st.spinner("Fetching latest headlines..."):
+                    # Prepare feeds list
+                    feeds_to_fetch = [
+                        {
+                            'rss_url': s.get('rss_url'),
+                            'source_name': s.get('name')
+                        }
+                        for s in news_sources
+                        if s.get('name') in selected_sources and s.get('rss_url')
+                    ]
+                    
+                    # Fetch headlines (cached)
+                    # Convert to hashable format for caching
+                    feeds_key = tuple(sorted([(f['rss_url'], f['source_name']) for f in feeds_to_fetch]))
+                    
+                    @st.cache_data(ttl=300)  # Cache for 5 minutes
+                    def fetch_headlines_cached(feeds_key_tuple):
+                        # Convert back to list of dicts
+                        feeds_list = [{'rss_url': url, 'source_name': name} for url, name in feeds_key_tuple]
+                        return rss_client.fetch_multiple_feeds(feeds_list, max_headlines=5)
+                    
+                    headlines = fetch_headlines_cached(feeds_key)
+                    
+                    if headlines:
+                        for idx, headline in enumerate(headlines):
+                            with st.container():
+                                st.markdown(f"**{headline.title}**")
+                                st.caption(f"📰 {headline.source_name}")
+                                if headline.published_at:
+                                    st.caption(f"🕒 {headline.published_at.strftime('%Y-%m-%d %H:%M')}")
+                                st.markdown(f"[Read more →]({headline.link})")
+                                if idx < len(headlines) - 1:
+                                    st.markdown("---")
+                    else:
+                        st.info("No headlines found. Please check your internet connection and RSS feed URLs.")
+            else:
+                st.info("Select news sources from the left to see headlines.")
 
 
