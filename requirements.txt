@@ -56,6 +56,12 @@ plotly>=5.18.0
 # Note: Latest available version on PyPI is 1.10.0 (as of Dec 2025)
 dune-client>=1.0.0
 
+# RSS feed parsing (for Fintech News tab)
+feedparser>=6.0.0
+
+# DOCX export (for URL Scraper tab)
+python-docx>=1.0.0
+
 # Note: playwright-stealth is optional and can be installed separately
 # if needed: pip install playwright-stealth
 
