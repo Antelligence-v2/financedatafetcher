@@ -216,6 +216,11 @@ class CoinGeckoScraper(BaseScraper):
         elif isinstance(json_data, list):
             # Exchange list format
             df = pd.DataFrame(json_data)
+            
+            # Exclude logo and incentive columns if present
+            columns_to_drop = [col for col in ['logo', 'incentive'] if col in df.columns]
+            if columns_to_drop:
+                df = df.drop(columns=columns_to_drop)
         
         else:
             df = pd.DataFrame([json_data])

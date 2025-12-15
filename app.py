@@ -186,11 +186,12 @@ def get_rss_client():
 rss_client = get_rss_client()
 
 # Main content
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "Crypto",
     "Market Sentiment",
     "Dental ETFs",
-    "Fintech News"
+    "Fintech News",
+    "Dev"
 ])
 
 with tab1:
@@ -807,80 +808,85 @@ with tab4:
     if not news_sources:
         st.warning("No news sources configured. Please check config/news_sources.yaml")
     else:
-        # Layout: 2/3 for sources, 1/3 for headlines
-        col_left, col_right = st.columns([2, 1])
+        # Multi-select for sources
+        source_names = [s.get('name', 'Unknown') for s in news_sources]
+        selected_sources = st.multiselect(
+            "Select news sources:",
+            source_names,
+            default=source_names[:4],  # Default to first 4
+            key="news_sources_select"
+        )
         
-        with col_left:
-            st.subheader("News Sources")
-            
-            # Multi-select for sources
-            source_names = [s.get('name', 'Unknown') for s in news_sources]
-            selected_sources = st.multiselect(
-                "Select news sources:",
-                source_names,
-                default=source_names[:4],  # Default to first 4
-                key="news_sources_select"
-            )
-            
-            # Display selected sources
-            if selected_sources:
-                st.markdown("---")
-                for source in news_sources:
-                    if source.get('name') in selected_sources:
-                        st.markdown(f"### {source.get('name', 'Unknown')}")
-                        st.caption(source.get('description', 'No description'))
-                        homepage = source.get('homepage_url', '#')
-                        if homepage != '#':
-                            st.markdown(f"[Visit Website →]({homepage})")
-                        st.markdown("---")
-        
-        with col_right:
-            st.subheader("Latest Headlines")
-            
-            # Fetch headlines button
-            if st.button("🔄 Refresh Headlines", key="refresh_headlines"):
-                # Clear cache to force refresh
-                st.cache_data.clear()
-                st.rerun()
-            
-            # Fetch headlines for selected sources
-            if selected_sources:
-                with st.spinner("Fetching latest headlines..."):
-                    # Prepare feeds list
-                    feeds_to_fetch = [
-                        {
-                            'rss_url': s.get('rss_url'),
-                            'source_name': s.get('name')
-                        }
-                        for s in news_sources
-                        if s.get('name') in selected_sources and s.get('rss_url')
-                    ]
-                    
-                    # Fetch headlines (cached)
-                    # Convert to hashable format for caching
-                    feeds_key = tuple(sorted([(f['rss_url'], f['source_name']) for f in feeds_to_fetch]))
-                    
-                    @st.cache_data(ttl=300)  # Cache for 5 minutes
-                    def fetch_headlines_cached(feeds_key_tuple):
-                        # Convert back to list of dicts
-                        feeds_list = [{'rss_url': url, 'source_name': name} for url, name in feeds_key_tuple]
-                        return rss_client.fetch_multiple_feeds(feeds_list, max_headlines=5)
-                    
-                    headlines = fetch_headlines_cached(feeds_key)
-                    
-                    if headlines:
-                        for idx, headline in enumerate(headlines):
-                            with st.container():
-                                st.markdown(f"**{headline.title}**")
-                                st.caption(f"📰 {headline.source_name}")
-                                if headline.published_at:
-                                    st.caption(f"🕒 {headline.published_at.strftime('%Y-%m-%d %H:%M')}")
-                                st.markdown(f"[Read more →]({headline.link})")
-                                if idx < len(headlines) - 1:
-                                    st.markdown("---")
+        # Display selected providers as hyperlinks on a single line
+        if selected_sources:
+            provider_links = []
+            for source in news_sources:
+                if source.get('name') in selected_sources:
+                    homepage = source.get('homepage_url', '#')
+                    name = source.get('name', 'Unknown')
+                    if homepage != '#':
+                        provider_links.append(f"[{name}]({homepage})")
                     else:
-                        st.info("No headlines found. Please check your internet connection and RSS feed URLs.")
-            else:
-                st.info("Select news sources from the left to see headlines.")
+                        provider_links.append(name)
+            
+            if provider_links:
+                st.markdown("**Selected Providers:** " + " | ".join(provider_links))
+                st.markdown("---")
+        
+        # Fetch headlines button
+        if st.button("🔄 Refresh Headlines", key="refresh_headlines"):
+            # Clear cache to force refresh
+            st.cache_data.clear()
+            st.rerun()
+        
+        # Fetch and display 5 headlines
+        if selected_sources:
+            with st.spinner("Fetching latest headlines..."):
+                # Prepare feeds list
+                feeds_to_fetch = [
+                    {
+                        'rss_url': s.get('rss_url'),
+                        'source_name': s.get('name')
+                    }
+                    for s in news_sources
+                    if s.get('name') in selected_sources and s.get('rss_url')
+                ]
+                
+                # Fetch headlines (cached)
+                # Convert to hashable format for caching
+                feeds_key = tuple(sorted([(f['rss_url'], f['source_name']) for f in feeds_to_fetch]))
+                
+                @st.cache_data(ttl=300)  # Cache for 5 minutes
+                def fetch_headlines_cached(feeds_key_tuple):
+                    # Convert back to list of dicts
+                    feeds_list = [{'rss_url': url, 'source_name': name} for url, name in feeds_key_tuple]
+                    return rss_client.fetch_multiple_feeds(feeds_list, max_headlines=5)
+                
+                headlines = fetch_headlines_cached(feeds_key)
+                
+                if headlines:
+                    st.subheader("Latest Headlines")
+                    for idx, headline in enumerate(headlines):
+                        with st.container():
+                            st.markdown(f"**{headline.title}**")
+                            st.caption(f"📰 {headline.source_name}")
+                            if headline.published_at:
+                                st.caption(f"🕒 {headline.published_at.strftime('%Y-%m-%d %H:%M')}")
+                            st.markdown(f"[Read more →]({headline.link})")
+                            if idx < len(headlines) - 1:
+                                st.markdown("---")
+                else:
+                    st.info("No headlines found. Please check your internet connection and RSS feed URLs.")
+        else:
+            st.info("Select news sources above to see headlines.")
+
+with tab5:
+    st.header("🔧 Dev")
+    st.markdown("""
+    This tab is for testing new features before they are added to the production website.
+    
+    Use this space to experiment with new functionality, UI changes, and data sources.
+    """)
+    st.info("This is a development/testing environment. Features here are experimental and may change.")
 
 
