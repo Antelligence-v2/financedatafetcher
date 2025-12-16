@@ -77,6 +77,7 @@ class SiteConfig:
     metadata: SiteMetadata = field(default_factory=SiteMetadata)
     rate_limit: Optional[float] = None  # Seconds between requests
     auth_config: Optional[AuthConfig] = None
+    asset: Optional[str] = None  # Asset type: "bitcoin", "ethereum", "both", "general"
     
     def to_dict(self) -> dict:
         """Convert to dictionary for YAML serialization."""
@@ -94,6 +95,8 @@ class SiteConfig:
         }
         if self.auth_config:
             result["auth_config"] = asdict(self.auth_config)
+        if self.asset:
+            result["asset"] = self.asset
         return result
     
     @classmethod
@@ -143,6 +146,7 @@ class SiteConfig:
             metadata=metadata,
             rate_limit=data.get("rate_limit"),
             auth_config=auth_config,
+            asset=data.get("asset"),
         )
 
 
@@ -286,14 +290,14 @@ class ConfigManager:
     def list_sites(self) -> List[Dict[str, Any]]:
         """
         List all configured sites with metadata.
-        
+
         Returns:
             List of dictionaries with id, name, page_url, and metadata
         """
         import os
         self.load()
         sites_list = []
-        
+
         for site in self._sites.values():
             site_dict = {
                 "id": site.id,
@@ -301,8 +305,9 @@ class ConfigManager:
                 "page_url": site.page_url,
                 "extraction_strategy": site.extraction_strategy,
                 "requires_auth": site.data_source.requires_auth if site.data_source else False,
+                "asset": site.asset,  # Include asset type
             }
-            
+
             # Check API key status
             api_key_status = "Not Required"
             if site.auth_config:
@@ -311,23 +316,26 @@ class ConfigManager:
                     api_key_status = "Configured" if api_key else "Missing"
                 elif site.auth_config.api_key:
                     api_key_status = "Configured"
-            
+
             site_dict["api_key_status"] = api_key_status
-            
+
             # Check subscription requirement
             requires_subscription = False
             if hasattr(site.metadata, "requires_subscription"):
                 requires_subscription = getattr(site.metadata, "requires_subscription", False)
             elif "requires_subscription" in site.metadata.__dict__:
                 requires_subscription = site.metadata.__dict__.get("requires_subscription", False)
-            
+
             site_dict["requires_subscription"] = requires_subscription
-            
+
             # Add robots.txt status
             site_dict["robots_status"] = site.robots_policy.status if site.robots_policy else "UNKNOWN"
-            
+
+            # Add metadata (for notes/description)
+            site_dict["metadata"] = asdict(site.metadata) if site.metadata else {}
+
             sites_list.append(site_dict)
-        
+
         return sites_list
     
     def validate_config(self, site: SiteConfig) -> List[str]:
