@@ -14,6 +14,23 @@ from .logger import get_logger
 from .io_utils import ensure_dir, save_raw_response
 
 
+def _is_replit_environment() -> bool:
+    """Check if running in Replit environment."""
+    return os.environ.get("REPL_ID") is not None
+
+def _is_streamlit_cloud() -> bool:
+    """Check if running on Streamlit Cloud."""
+    return os.environ.get("STREAMLIT_CLOUD") is not None
+
+def _is_railway_environment() -> bool:
+    """Check if running in Railway environment."""
+    return (
+        os.environ.get("RAILWAY_ENVIRONMENT") is not None 
+        or os.environ.get("RAILWAY_SERVICE_NAME") is not None
+        or os.environ.get("RAILWAY_PROJECT_ID") is not None
+    )
+
+
 @dataclass
 class NetworkRequest:
     """Captured network request."""
@@ -85,6 +102,8 @@ class BrowserManager:
         self._browser = None
         self._context = None
         self._installation_attempted = False  # Track if we've tried to install browsers
+        self._retry_count = 0  # Track retry attempts for browser launch
+        self._max_retries = 2  # Maximum retries for browser launch
     
     def _check_browser_installed(self) -> bool:
         """
@@ -156,7 +175,7 @@ class BrowserManager:
         await self.close()
     
     async def start(self):
-        """Start the browser."""
+        """Start the browser with retry logic."""
         try:
             from playwright.async_api import async_playwright
         except ImportError:
@@ -164,47 +183,101 @@ class BrowserManager:
                 "Playwright is required. Install with: pip install playwright && playwright install"
             )
         
-        self._playwright = await async_playwright().start()
+        # Retry logic for browser launch
+        last_error = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                if self._playwright is None:
+                    self._playwright = await async_playwright().start()
+                
+                # Try to launch browser (browsers should be pre-installed during deployment)
+                self._browser = await self._playwright.chromium.launch(headless=self.headless)
+                self.logger.info("Browser launched successfully (pre-installed)")
+                self._retry_count = 0  # Reset retry count on success
+                break  # Success, exit retry loop
+            except Exception as e:
+                last_error = e
+                error_class = self._classify_error(e)
+                self.logger.warning(f"Browser launch attempt {attempt + 1}/{self._max_retries + 1} failed: {error_class}")
+                
+                # If this is the last attempt, handle the error
+                if attempt == self._max_retries:
+                    break
+                
+                # Exponential backoff: wait 1s, 2s, etc.
+                wait_time = 2 ** attempt
+                self.logger.info(f"Retrying browser launch in {wait_time} seconds...")
+                await asyncio.sleep(wait_time)
         
-        # First, try to launch browser (browsers should be pre-installed during deployment)
-        try:
-            self._browser = await self._playwright.chromium.launch(headless=self.headless)
-            self.logger.info("Browser launched successfully (pre-installed)")
-        except Exception as e:
-            error_class = self._classify_error(e)
-            self.logger.warning(f"Browser launch failed: {error_class}")
+        # If we still have an error after retries, handle it
+        if last_error is not None:
+            error_class = self._classify_error(last_error)
+            self.logger.warning(f"Browser launch failed after {self._max_retries + 1} attempts: {error_class}")
             
             # Only attempt runtime installation as last resort
             # Check if we've already attempted installation in this session
             if self._installation_attempted:
                 if error_class == "missing_deps":
-                    raise RuntimeError(
-                        "Playwright browser dependencies are missing. "
-                        "System dependencies should be installed via packages.txt during deployment. "
-                        "Please ensure packages.txt includes all required libraries (libnss3, libnspr4, etc.)."
-                    )
+                    if _is_railway_environment():
+                        raise RuntimeError(
+                            "Playwright browser dependencies are missing. "
+                            "Ensure you're using the Playwright Docker image (mcr.microsoft.com/playwright/python) "
+                            "which includes all browser dependencies. "
+                            "If using a custom Dockerfile, ensure 'playwright install-deps chromium' runs successfully."
+                        )
+                    else:
+                        raise RuntimeError(
+                            "Playwright browser dependencies are missing. "
+                            "System dependencies should be installed via replit.nix (Replit) or packages.txt (Streamlit Cloud) during deployment. "
+                            "Please ensure replit.nix includes all required packages (pkgs.mesa, pkgs.nss, pkgs.nspr, etc.)."
+                        )
                 elif error_class == "missing_browser":
-                    raise RuntimeError(
-                        "Playwright browsers are not installed. "
-                        "Browsers should be installed during deployment via post_install.sh. "
-                        "If this persists, check deployment logs for browser installation errors."
-                    )
+                    if _is_railway_environment():
+                        raise RuntimeError(
+                            "Playwright browsers are not installed. "
+                            "Browsers should be installed during Docker build via 'playwright install chromium'. "
+                            "Check your Dockerfile and ensure browsers are installed before deployment."
+                        )
+                    else:
+                        raise RuntimeError(
+                            "Playwright browsers are not installed. "
+                            "Browsers should be installed during deployment via post_install.sh. "
+                            "If this persists, check deployment logs for browser installation errors."
+                        )
                 else:
                     raise RuntimeError(
-                        f"Browser launch failed with runtime error: {str(e)}"
+                        f"Browser launch failed with runtime error after {self._max_retries + 1} attempts: {str(last_error)}"
                     )
             
             # Check if browsers appear to be installed (but launch failed)
             browsers_exist = self._check_browser_installed()
             
             if error_class == "missing_deps":
-                # System dependencies missing - should be in packages.txt
-                raise RuntimeError(
-                    "Playwright browser dependencies are missing. "
-                    "This indicates packages.txt may not have been processed correctly during deployment. "
-                    "Required libraries: libnss3, libnspr4, libatk1.0-0, libatk-bridge2.0-0, and others. "
-                    f"Original error: {str(e)}"
-                )
+                # System dependencies missing - detect platform and provide appropriate error
+                if _is_railway_environment():
+                    raise RuntimeError(
+                        "Playwright browser dependencies are missing. "
+                        "This indicates the Docker image may not have all required system dependencies. "
+                        "Ensure you're using the Playwright Docker image (mcr.microsoft.com/playwright/python) "
+                        "which includes all browser dependencies. "
+                        "If using a custom Dockerfile, ensure 'playwright install-deps chromium' runs successfully. "
+                        f"Original error: {str(last_error)}"
+                    )
+                elif _is_replit_environment():
+                    raise RuntimeError(
+                        "Playwright browser dependencies are missing. "
+                        "This indicates replit.nix may not have been processed correctly. "
+                        "Please rebuild the Replit environment (Packages > Rebuild) to ensure system dependencies are installed. "
+                        "Required packages in replit.nix: pkgs.mesa, pkgs.nss, pkgs.nspr, pkgs.atk, etc. "
+                        f"Original error: {str(last_error)}"
+                    )
+                else:
+                    raise RuntimeError(
+                        "Playwright browser dependencies are missing. "
+                        "This indicates packages.txt may not have been processed correctly during deployment. "
+                        "Required libraries: libnss3, libnspr4, libatk1.0-0, libatk-bridge2.0-0, and others. "
+                        f"Original error: {str(last_error)}"
+                    )
             
             # If browsers don't exist and we haven't tried installing, attempt it
             if not browsers_exist and not self._installation_attempted:
@@ -214,7 +287,7 @@ class BrowserManager:
                 try:
                     import subprocess
                     import sys
-                    # Try installing without --with-deps first (deps should be from packages.txt)
+                    # Try installing without --with-deps first (deps should be from replit.nix on Replit or packages.txt on Streamlit Cloud)
                     self.logger.info("Installing Playwright browsers (system deps should already be installed)...")
                     result = subprocess.run(
                         [sys.executable, "-m", "playwright", "install", "chromium"],
@@ -249,11 +322,18 @@ class BrowserManager:
                     )
             else:
                 # Browsers exist but launch failed - likely a runtime error
-                raise RuntimeError(
+                error_msg = (
                     f"Browser launch failed even though browsers appear to be installed. "
                     f"This may indicate a system dependency issue or configuration problem. "
-                    f"Error: {str(e)}"
+                    f"Error: {str(last_error)}"
                 )
+                if _is_railway_environment():
+                    error_msg += (
+                        "\nRailway troubleshooting: "
+                        "Check Railway logs for memory/resource constraints. "
+                        "Consider upgrading to a larger instance if multiple browser instances are needed."
+                    )
+                raise RuntimeError(error_msg)
         
         self._context = await self._browser.new_context(
             user_agent=self.user_agent,

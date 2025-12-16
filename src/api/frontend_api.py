@@ -38,8 +38,10 @@ from src.scraper.dental_etf_scraper import DentalETFScraper
 from src.utils.config_manager import ConfigManager
 from src.pipeline.pipeline_runner import PipelineRunner, PipelineResult
 from src.exporter.excel_exporter import ExcelExporter
+from src.extractor.article_extractor import ArticleExtractor
 from src.utils.logger import get_logger
 from src.utils.io_utils import get_output_path, generate_run_id
+import requests
 
 logger = get_logger()
 
@@ -53,6 +55,7 @@ class FrontendAPI:
     def __init__(self):
         self.config_manager = ConfigManager()
         self.exporter = ExcelExporter()
+        self.article_extractor = ArticleExtractor()
         self.logger = get_logger()
     
     def scrape_url(
@@ -409,4 +412,145 @@ class FrontendAPI:
         
         # Freeze header row
         worksheet.freeze_panes = "A2"
+    
+    def extract_article(
+        self,
+        url: str,
+        use_stealth: bool = True,
+        override_robots: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Extract article content from a URL (for article-like pages).
+        
+        Args:
+            url: URL to extract article from
+            use_stealth: Enable stealth mode (not used for simple HTTP fetch, but kept for API consistency)
+            override_robots: Override robots.txt (not used for simple HTTP fetch, but kept for API consistency)
+        
+        Returns:
+            Dictionary with article data:
+            - title: Article title
+            - text: Main article text
+            - author: Author name (if found)
+            - published_at: Publication date (if found)
+            - url: Source URL
+            - extracted_at: Timestamp of extraction
+            - success: Boolean indicating success
+            - error: Error message if failed
+        """
+        try:
+            # Fetch HTML with requests (lightweight, no browser needed for article extraction)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            
+            # Extract article content
+            article_data = self.article_extractor.extract(response.text, url)
+            article_data['success'] = True
+            article_data['error'] = None
+            
+            return article_data
+        
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error fetching article from {url}: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'title': None,
+                'text': None,
+                'author': None,
+                'published_at': None,
+                'url': url,
+                'extracted_at': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            logger.error(f"Error extracting article from {url}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {
+                'success': False,
+                'error': str(e),
+                'title': None,
+                'text': None,
+                'author': None,
+                'published_at': None,
+                'url': url,
+                'extracted_at': datetime.now().isoformat(),
+            }
+    
+    def export_to_docx(
+        self,
+        article_data: Dict[str, Any],
+        filename: Optional[str] = None,
+    ) -> Tuple[Optional[bytes], Optional[str]]:
+        """
+        Export article data to DOCX format (in-memory for cloud compatibility).
+        
+        Args:
+            article_data: Dictionary with article fields (title, text, author, etc.)
+            filename: Optional filename (without extension)
+        
+        Returns:
+            Tuple of (docx_bytes, filename)
+        """
+        try:
+            from docx import Document
+            from docx.shared import Inches, Pt
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            import io
+            
+            if filename is None:
+                filename = f"article_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            # Ensure .docx extension
+            if not filename.endswith(".docx"):
+                filename += ".docx"
+            
+            # Create document
+            doc = Document()
+            
+            # Add title
+            title = article_data.get('title', 'Untitled Article')
+            title_para = doc.add_heading(title, level=1)
+            title_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            
+            # Add metadata
+            if article_data.get('author'):
+                doc.add_paragraph(f"Author: {article_data['author']}")
+            if article_data.get('published_at'):
+                doc.add_paragraph(f"Published: {article_data['published_at']}")
+            if article_data.get('url'):
+                doc.add_paragraph(f"Source: {article_data['url']}")
+            
+            doc.add_paragraph("")  # Blank line
+            
+            # Add main text (split into paragraphs)
+            text = article_data.get('text', '')
+            if text:
+                # Split by double newlines (paragraph breaks)
+                paragraphs = text.split('\n\n')
+                for para_text in paragraphs:
+                    para_text = para_text.strip()
+                    if para_text:
+                        doc.add_paragraph(para_text)
+            
+            # Save to in-memory bytes
+            docx_bytes = io.BytesIO()
+            doc.save(docx_bytes)
+            docx_bytes.seek(0)
+            docx_content = docx_bytes.read()
+            
+            logger.info(f"Exported article to DOCX ({len(docx_content)} bytes)")
+            return docx_content, filename
+        
+        except ImportError:
+            logger.error("python-docx not installed. Cannot export to DOCX.")
+            return None, None
+        except Exception as e:
+            logger.error(f"Error exporting to DOCX: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None, None
 

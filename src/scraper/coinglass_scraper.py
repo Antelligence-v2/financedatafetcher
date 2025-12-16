@@ -4,6 +4,7 @@ Uses browser automation to extract data from CoinGlass pages.
 """
 
 import json
+import os
 import re
 import asyncio
 from typing import Dict, Any, Optional
@@ -161,16 +162,21 @@ class CoinGlassScraper(BaseScraper):
                     def handle_response(response):
                         try:
                             url = response.url.lower()
-                            if "api" in url or "data" in url or "coinglass" in url:
+                            # Improved filtering for CoinGlass-specific API patterns
+                            if any(pattern in url for pattern in [
+                                "api", "data", "coinglass", "v1", "v2", 
+                                "graphql", "query", "fetch", "endpoint"
+                            ]):
                                 # Store response for async processing
                                 api_responses.append(response)
-                        except:
+                        except Exception as e:
+                            self.logger.debug(f"Error in response handler: {e}")
                             pass
                     
                     page.on("response", handle_response)
                     
-                    # Wait a bit for responses to come in
-                    await asyncio.sleep(1)
+                    # Wait longer for responses to come in (CoinGlass can be slow)
+                    await asyncio.sleep(2)
                     
                     try:
                         # Evaluate JavaScript to get data from window objects and React state
@@ -210,37 +216,52 @@ class CoinGlassScraper(BaseScraper):
                     except Exception as e:
                         self.logger.debug(f"Could not extract JS data: {e}")
                     
-                    # Process API responses - capture all network requests
+                    # Process API responses - capture all network requests with timeout handling
                     if api_responses:
                         network_data = network_data or {}
                         processed_responses = []
                         for resp in api_responses:
                             try:
                                 if resp.status == 200:
-                                    # Try JSON first
+                                    # Try JSON first with timeout
                                     try:
-                                        data = await resp.json()
+                                        # Add timeout for slow network responses
+                                        data = await asyncio.wait_for(resp.json(), timeout=5.0)
                                         processed_responses.append({
                                             "url": resp.url,
                                             "data": data,
                                             "type": "json"
                                         })
-                                    except:
-                                        # Try text/CSV
+                                    except asyncio.TimeoutError:
+                                        self.logger.debug(f"Timeout reading JSON from {resp.url}")
+                                        # Try text/CSV as fallback
                                         try:
-                                            text_data = await resp.text()
+                                            text_data = await asyncio.wait_for(resp.text(), timeout=5.0)
                                             processed_responses.append({
                                                 "url": resp.url,
                                                 "data": text_data,
                                                 "type": "text"
                                             })
-                                        except:
-                                            pass
+                                        except asyncio.TimeoutError:
+                                            self.logger.debug(f"Timeout reading text from {resp.url}")
+                                    except Exception:
+                                        # Try text/CSV as fallback
+                                        try:
+                                            text_data = await asyncio.wait_for(resp.text(), timeout=5.0)
+                                            processed_responses.append({
+                                                "url": resp.url,
+                                                "data": text_data,
+                                                "type": "text"
+                                            })
+                                        except Exception as e:
+                                            self.logger.debug(f"Error reading response body: {e}")
                             except Exception as e:
                                 self.logger.debug(f"Error processing API response: {e}")
                         if processed_responses:
                             network_data["api_responses"] = processed_responses
                             self.logger.info(f"Captured {len(processed_responses)} API responses")
+                        else:
+                            self.logger.warning("Network capture failed - falling back to DOM extraction")
                     
                     return {
                         "type": "dom_js_extraction",
@@ -264,12 +285,35 @@ class CoinGlassScraper(BaseScraper):
         except RuntimeError as e:
             error_msg = str(e)
             if "missing" in error_msg.lower() or "libnspr4" in error_msg or "shared library" in error_msg.lower():
-                raise RuntimeError(
-                    "CoinGlass scraper requires browser automation but Playwright dependencies are not available. "
-                    "This typically happens in cloud deployments where browser libraries are missing. "
-                    "On Streamlit Cloud, ensure packages.txt includes: libnss3, libnspr4, libatk1.0-0, "
-                    "libatk-bridge2.0-0, libcups2, libdrm2, libxcomposite1, libxdamage1, libgbm1, and libpango-1.0-0."
+                # Detect deployment platform
+                is_railway = (
+                    os.environ.get("RAILWAY_ENVIRONMENT") is not None 
+                    or os.environ.get("RAILWAY_SERVICE_NAME") is not None
+                    or os.environ.get("RAILWAY_PROJECT_ID") is not None
                 )
+                is_replit = os.environ.get("REPL_ID") is not None
+                
+                if is_railway:
+                    raise RuntimeError(
+                        "CoinGlass scraper requires browser automation but Playwright dependencies are not available. "
+                        "On Railway, ensure you're using the Playwright Docker image (mcr.microsoft.com/playwright/python) "
+                        "which includes all browser dependencies. "
+                        "If using a custom Dockerfile, ensure 'playwright install-deps chromium' runs successfully. "
+                        "Check Railway deployment logs for browser installation errors."
+                    )
+                elif is_replit:
+                    raise RuntimeError(
+                        "CoinGlass scraper requires browser automation but Playwright dependencies are not available. "
+                        "On Replit, ensure replit.nix includes: pkgs.mesa, pkgs.nss, pkgs.nspr, pkgs.atk, "
+                        "pkgs.at-spi2-atk, pkgs.cups, pkgs.libdrm, pkgs.xorg.libXcomposite, pkgs.xorg.libXdamage, "
+                        "pkgs.pango, and other browser dependencies. Rebuild the environment after updating replit.nix."
+                    )
+                else:
+                    raise RuntimeError(
+                        "CoinGlass scraper requires browser automation but Playwright dependencies are not available. "
+                        "On Streamlit Cloud, ensure packages.txt includes: libnss3, libnspr4, libatk1.0-0, "
+                        "libatk-bridge2.0-0, libcups2, libdrm2, libxcomposite1, libxdamage1, libgbm1, and libpango-1.0-0."
+                    )
             raise
     
     def parse_raw(self, raw_data: Dict[str, Any]) -> pd.DataFrame:

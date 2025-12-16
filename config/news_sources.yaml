@@ -1,0 +1,39 @@
+# Fintech News Sources Configuration
+# RSS feeds for fetching latest headlines
+
+sources:
+  - name: "CoinDesk"
+    homepage_url: "https://www.coindesk.com"
+    rss_url: "https://www.coindesk.com/arc/outboundfeeds/rss/"
+    description: "Cryptocurrency and blockchain news"
+    category: "crypto"
+  
+  - name: "The Block"
+    homepage_url: "https://www.theblock.co"
+    rss_url: "https://www.theblock.co/rss.xml"
+    description: "Crypto markets and data"
+    category: "crypto"
+  
+  - name: "Decrypt"
+    homepage_url: "https://decrypt.co"
+    rss_url: "https://decrypt.co/feed"
+    description: "Crypto news and analysis"
+    category: "crypto"
+  
+  - name: "CoinTelegraph"
+    homepage_url: "https://cointelegraph.com"
+    rss_url: "https://cointelegraph.com/rss"
+    description: "Bitcoin and cryptocurrency news"
+    category: "crypto"
+  
+  - name: "Financial Times - Fintech"
+    homepage_url: "https://www.ft.com/fintech"
+    rss_url: "https://www.ft.com/fintech?format=rss"
+    description: "Financial technology news from FT"
+    category: "fintech"
+  
+  - name: "TechCrunch - Fintech"
+    homepage_url: "https://techcrunch.com/tag/fintech/"
+    rss_url: "https://techcrunch.com/tag/fintech/feed/"
+    description: "Fintech startup and innovation news"
+    category: "fintech"
