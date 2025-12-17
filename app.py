@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 import os
 import plotly.graph_objects as go
+from datetime import datetime
 
 # Load environment variables from .env file FIRST, before any other imports
 try:
@@ -44,7 +45,7 @@ if str(app_dir) not in sys.path:
     sys.path.insert(0, str(app_dir))
 
 from src.api.frontend_api import FrontendAPI
-from src.news.rss_client import RSSClient, Headline
+from src.news.rss_client import RSSClient
 import yaml
 
 # Helper function to format large numbers as millions
@@ -913,7 +914,23 @@ with tab4:
                 def fetch_headlines_cached(feeds_key_tuple):
                     # Convert back to list of dicts
                     feeds_list = [{'rss_url': url, 'source_name': name} for url, name in feeds_key_tuple]
-                    return rss_client.fetch_multiple_feeds(feeds_list, max_headlines=5)
+                    # Streamlit cache requires a reliably pickle-serializable return value.
+                    # In some deployment environments, dataclass instances (and nested datetimes)
+                    # can fail to pickle consistently, so we normalize to plain dicts + primitives.
+                    headlines = rss_client.fetch_multiple_feeds(feeds_list, max_headlines=5)
+                    serializable = []
+                    for h in headlines or []:
+                        published = getattr(h, "published_at", None)
+                        serializable.append(
+                            {
+                                "title": getattr(h, "title", "") or "",
+                                "link": getattr(h, "link", "") or "",
+                                "source_name": getattr(h, "source_name", "") or "",
+                                "published_at": published.isoformat() if published else None,
+                                "description": getattr(h, "description", None),
+                            }
+                        )
+                    return serializable
                 
                 headlines = fetch_headlines_cached(feeds_key)
                 
@@ -921,11 +938,23 @@ with tab4:
                     st.subheader("Latest Headlines")
                     for idx, headline in enumerate(headlines):
                         with st.container():
-                            st.markdown(f"**{headline.title}**")
-                            st.caption(f"📰 {headline.source_name}")
-                            if headline.published_at:
-                                st.caption(f"🕒 {headline.published_at.strftime('%Y-%m-%d %H:%M')}")
-                            st.markdown(f"[Read more →]({headline.link})")
+                            title = headline.get("title", "") if isinstance(headline, dict) else str(headline)
+                            link = headline.get("link", "") if isinstance(headline, dict) else ""
+                            source_name = headline.get("source_name", "") if isinstance(headline, dict) else ""
+                            published_at = headline.get("published_at") if isinstance(headline, dict) else None
+
+                            st.markdown(f"**{title}**")
+                            if source_name:
+                                st.caption(f"📰 {source_name}")
+                            if published_at:
+                                # `published_at` is stored in cache as an ISO string for safe serialization.
+                                try:
+                                    dt = datetime.fromisoformat(published_at)
+                                    st.caption(f"🕒 {dt.strftime('%Y-%m-%d %H:%M')}")
+                                except Exception:
+                                    st.caption(f"🕒 {published_at}")
+                            if link:
+                                st.markdown(f"[Read more →]({link})")
                             if idx < len(headlines) - 1:
                                 st.markdown("---")
                 else:
