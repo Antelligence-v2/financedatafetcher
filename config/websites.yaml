@@ -5,6 +5,7 @@ sites:
   # The Block - BTC and ETH Total Exchange Volume (7DMA)
   - id: theblock_btc_eth_volume_7dma
     name: "The Block - BTC/ETH Exchange Volume 7DMA"
+    asset: "both"
     base_url: "https://www.theblock.co"
     page_url: "https://www.theblock.co/data/crypto-markets/spot/btc-and-eth-total-exchange-volume-7dma"
     extraction_strategy: "api_json"
@@ -32,6 +33,7 @@ sites:
   # CoinGecko - Exchange Volume (Public API)
   - id: coingecko_exchange_volume
     name: "CoinGecko - Exchange Volume"
+    asset: "general"
     base_url: "https://api.coingecko.com"
     page_url: "https://www.coingecko.com/en/exchanges"
     extraction_strategy: "api_json"
@@ -60,6 +62,7 @@ sites:
   # CoinGecko - BTC Market Chart (Historical Data)
   - id: coingecko_btc_market_chart
     name: "CoinGecko - BTC Market Chart"
+    asset: "bitcoin"
     base_url: "https://api.coingecko.com"
     page_url: "https://www.coingecko.com/en/coins/bitcoin"
     extraction_strategy: "api_json"
@@ -84,6 +87,34 @@ sites:
       last_successful_extraction: null
       notes: "Historical Bitcoin market data including prices, market caps, and trading volumes"
     rate_limit: 1.0
+
+  # Legacy CryptoCompare - Daily Exchange Volume (deprecated, use CoinDesk)
+  - id: cryptocompare_exchange_volume
+    name: "CryptoCompare - Daily Exchange Volume (Legacy)"
+    asset: "general"
+    base_url: "https://min-api.cryptocompare.com"
+    page_url: "https://min-api.cryptocompare.com/data/exchange/histoday"
+    extraction_strategy: "api_json"
+    data_source:
+      type: "api"
+      endpoint: "https://min-api.cryptocompare.com/data/exchange/histoday?tsym=USD&limit=30"
+      method: "GET"
+      requires_auth: false
+      headers:
+        Accept: "application/json"
+    field_mappings:
+      date: "time"
+      volume: "volume"
+    robots_policy:
+      status: "ALLOWED"
+      last_checked: "2024-01-15T00:00:00Z"
+      override_approved: false
+    metadata:
+      created: "2024-01-15T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+      notes: "Legacy daily exchange volume data (deprecated)"
+    rate_limit: 0.5
 
   # Alpha Vantage - Company Overview
   - id: alphavantage_company_overview
@@ -145,9 +176,94 @@ sites:
     rate_limit: 12.0  # seconds between requests (5 calls/minute for free tier)
 
 
+  # CoinGlass - BTC Overview (Browser-based extraction)
+  - id: coinglass_btc_overview
+    name: "CoinGlass - BTC Overview"
+    asset: "bitcoin"
+    base_url: "https://www.coinglass.com"
+    page_url: "https://www.coinglass.com/currencies/BTC"
+    extraction_strategy: "dom_js_extraction"
+    data_source:
+      type: "browser"
+      page_url: "https://www.coinglass.com/currencies/BTC"
+    field_mappings:
+      btc_price: "BTC Price"
+      futures_volume_24h: "Futures Volume (24h)"
+      spot_volume_24h: "Spot Volume (24h)"
+      open_interest: "Open Interest"
+      net_inflow_24h: "Net Inflow (24h)"
+    robots_policy:
+      status: "UNKNOWN"
+      last_checked: "2025-12-09T00:00:00Z"
+      override_approved: false
+    metadata:
+      created: "2025-12-09T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+      requires_subscription: false
+      notes: "Bitcoin overview metrics including price, futures/spot volume, open interest, and net inflow"
+    rate_limit: 5.0  # seconds between requests (to avoid Cloudflare)
+
+  # CoinGlass - Spot Inflow/Outflow (Browser-based extraction)
+  - id: coinglass_spot_flows
+    name: "CoinGlass - Spot Inflow/Outflow"
+    asset: "general"
+    base_url: "https://www.coinglass.com"
+    page_url: "https://www.coinglass.com/currencies/BTC"
+    extraction_strategy: "dom_js_extraction"
+    data_source:
+      type: "browser"
+      page_url: "https://www.coinglass.com/currencies/BTC"
+    field_mappings:
+      net_inflow_5min: "Net Inflow (5 min)"
+      net_inflow_1h: "Net Inflow (1 hour)"
+      net_inflow_4h: "Net Inflow (4 hours)"
+      net_inflow_12h: "Net Inflow (12 hours)"
+      net_inflow_24h: "Net Inflow (24 hours)"
+    robots_policy:
+      status: "UNKNOWN"
+      last_checked: "2025-12-09T00:00:00Z"
+      override_approved: false
+    metadata:
+      created: "2025-12-09T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+      requires_subscription: false
+      notes: "Spot market inflow and outflow metrics across multiple timeframes (5min, 1h, 4h, 12h, 24h)"
+    rate_limit: 5.0
+
+  # CoinGlass - Volatility Metrics (Browser-based extraction)
+  - id: coinglass_volatility
+    name: "CoinGlass - Volatility Metrics"
+    asset: "general"
+    base_url: "https://www.coinglass.com"
+    page_url: "https://www.coinglass.com/volatility"
+    extraction_strategy: "dom_js_extraction"
+    data_source:
+      type: "browser"
+      page_url: "https://www.coinglass.com/volatility"
+    field_mappings:
+      btc_volatility_1d: "BTC Volatility (1-day)"
+      eth_volatility_1d: "ETH Volatility (1-day)"
+      sol_volatility_1d: "SOL Volatility (1-day)"
+      xrp_volatility_1d: "XRP Volatility (1-day)"
+      doge_volatility_1d: "DOGE Volatility (1-day)"
+    robots_policy:
+      status: "UNKNOWN"
+      last_checked: "2025-12-09T00:00:00Z"
+      override_approved: false
+    metadata:
+      created: "2025-12-09T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+      requires_subscription: false
+      notes: "1-day volatility metrics for major cryptocurrencies (BTC, ETH, SOL, XRP, DOGE)"
+    rate_limit: 5.0
+
   # Dune Analytics - ETH Staking: Total ETH Deposited
   - id: dune_eth_staking_total_deposited
     name: "Dune - ETH Staking: Total ETH Deposited"
+    asset: "ethereum"
     base_url: "https://dune.com"
     page_url: "https://dune.com/queries/2361452"
     extraction_strategy: "api_json"
@@ -181,6 +297,7 @@ sites:
   # Dune Analytics - ETH Staking: Validators and Depositors
   - id: dune_eth_staking_validators_depositors
     name: "Dune - ETH Staking: Validators & Depositors"
+    asset: "ethereum"
     base_url: "https://dune.com"
     page_url: "https://dune.com/queries/2361448"
     extraction_strategy: "api_json"
@@ -215,6 +332,7 @@ sites:
   # Dune Analytics - ETH Staking Statistics (Combined - uses both queries)
   - id: dune_eth_staking
     name: "Dune - ETH Staking Statistics (Combined)"
+    asset: "ethereum"
     base_url: "https://dune.com"
     page_url: "https://dune.com/underfire/eth-staking-statistics"
     extraction_strategy: "api_json"
@@ -561,9 +679,10 @@ sites:
       notes: "5 EU indicators from MONTHLY sheet. Data from 1985-present."
     rate_limit: 5.0
 
-  # The Block - Exchange Volume
+  # The Block - Exchange Volume (Browser-based with API fallback)
   - id: theblock_exchange_volume
-    name: "The Block - BTC, ETH & SOL Combined"
+    name: "The Block - BTC, ETH & SOL Combined (TOTAL3)"
+    asset: "both"
     base_url: "https://www.theblock.co"
     page_url: "https://www.theblock.co/data/crypto-markets/spot/total-exchange-volume-daily"
     extraction_strategy: "api_json"
@@ -592,5 +711,175 @@ sites:
       last_successful_extraction: null
       requires_subscription: false
       notes: "Daily exchange volume data including BTC, ETH, and SOL volumes, plus exchange-specific volumes (Binance, Bybit, Bitget) and DEX volume"
+    rate_limit: 2.0
+
+  # Bitcoin.com - Derivatives Snapshot (Uses CoinGlass data)
+  - id: bitcoin_com_derivatives_snapshot
+    name: "CoinGlass - Derivatives Snapshot (BTC)"
+    asset: "bitcoin"
+    base_url: "https://www.coinglass.com"
+    page_url: "https://www.coinglass.com/currencies/BTC"
+    extraction_strategy: "dom_js_extraction"
+    data_source:
+      type: "browser"
+      page_url: "https://www.coinglass.com/currencies/BTC"
+    field_mappings:
+      futures_oi_all_exchanges: "Futures OI (All Exchanges)"
+      cme_btc_oi: "CME BTC OI"
+      binance_btc_oi: "Binance BTC OI"
+      btc_options_calls_oi: "BTC Options Calls OI"
+      btc_options_puts_oi: "BTC Options Puts OI"
+    robots_policy:
+      status: "UNKNOWN"
+      last_checked: "2025-12-09T00:00:00Z"
+      override_approved: false
+    metadata:
+      created: "2025-12-09T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+      requires_subscription: false
+      notes: "Bitcoin derivatives snapshot including futures open interest, CME/Binance OI, and options data"
+    rate_limit: 5.0
+
+  # CoinGlass - Liquidations (replaces Invezz)
+  - id: invezz_liquidations
+    name: "CoinGlass - Liquidations"
+    asset: "general"
+    base_url: "https://www.coinglass.com"
+    page_url: "https://www.coinglass.com/LiquidationData"
+    extraction_strategy: "dom_js_extraction"
+    data_source:
+      type: "browser"
+      page_url: "https://www.coinglass.com/LiquidationData"
+    field_mappings:
+      total_liquidations_24h: "Total Liquidations (24h)"
+      long_liquidations: "Long Liquidations"
+      short_liquidations: "Short Liquidations"
+      btc_liquidations_24h: "BTC Liquidations (24h)"
+      eth_liquidations_24h: "ETH Liquidations (24h)"
+    robots_policy:
+      status: "UNKNOWN"
+      last_checked: "2025-12-09T00:00:00Z"
+      override_approved: false
+    metadata:
+      created: "2025-12-09T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+      requires_subscription: false
+      notes: "Switched from Invezz to CoinGlass for more accurate liquidations data. Browser-based extraction."
+    rate_limit: 5.0
+
+  # ============================================
+  # DENTAL ETFs DATA SOURCES
+  # ============================================
+
+  # 1. SwingTradeBot - Dentistry ETF List
+  - id: dental_swingtradebot_etf_list
+    name: "SwingTradeBot - Dentistry ETF List"
+    base_url: "https://swingtradebot.com"
+    page_url: "https://swingtradebot.com/etfs-by-keyword/4628-dentistry"
+    extraction_strategy: "dom_table"
+    data_source:
+      type: "table"
+      selector: "table"
+    field_mappings:
+      symbol: "Symbol"
+      name: "Name"
+      grade: "Grade"
+      pct_change: "% Change"
+      weighting: "Weighting"
+      holdings: "Holdings"
+    robots_policy:
+      status: "UNKNOWN"
+      last_checked: null
+      override_approved: false
+    metadata:
+      created: "2025-01-01T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+      requires_subscription: false
+      notes: "Lists all ETFs that hold at least one dentistry stock with dental theme weighting. Paginated HTML table."
+    rate_limit: 2.0
+
+  # 2. Yahoo Finance - ETF Holdings (Template - user selects ETF)
+  - id: dental_yahoo_etf_holdings
+    name: "Yahoo Finance - ETF Holdings"
+    base_url: "https://finance.yahoo.com"
+    page_url: "https://finance.yahoo.com/quote/IHI/holdings/"
+    extraction_strategy: "dom_table"
+    data_source:
+      type: "table"
+      selector: "table"
+      url_template: "https://finance.yahoo.com/quote/{etf_symbol}/holdings/"
+    field_mappings:
+      symbol: "Symbol"
+      name: "Name"
+      weight: "% Assets"
+      shares: "Shares"
+    robots_policy:
+      status: "UNKNOWN"
+      last_checked: null
+      override_approved: false
+    metadata:
+      created: "2025-01-01T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+      requires_subscription: false
+      notes: "ETF constituent holdings with weights. User selects ETF (e.g., IHI, XHE, LGHT). Can loop over multiple ETFs."
+    rate_limit: 2.0
+
+  # 3. Fintel - SIC 3843 Dental Equipment & Supplies Companies
+  - id: dental_fintel_sic_3843
+    name: "Fintel - Dental Equipment Companies (SIC 3843)"
+    base_url: "https://fintel.io"
+    page_url: "https://fintel.io/industry/list/dental-equipment-and-supplies"
+    extraction_strategy: "dom_table"
+    data_source:
+      type: "table"
+      selector: "table"
+    field_mappings:
+      ticker: "Ticker"
+      company: "Company"
+      market_cap: "Market Cap"
+      country: "Country"
+    robots_policy:
+      status: "UNKNOWN"
+      last_checked: null
+      override_approved: false
+    metadata:
+      created: "2025-01-01T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+      requires_subscription: false
+      notes: "Regulator-style industry list of publicly traded Dental Equipment and Supplies companies (SIC code 3843)."
+    rate_limit: 2.0
+
+  # 4. PortfolioPilot - Dental Stocks Risk/Return Metrics
+  - id: dental_portfoliopilot_risk_return
+    name: "PortfolioPilot - Dental Stocks Risk/Return"
+    base_url: "https://portfoliopilot.com"
+    page_url: "https://portfoliopilot.com/explore/stock-screener/dental-stocks"
+    extraction_strategy: "dom_table"
+    data_source:
+      type: "table"
+      selector: "table"
+    field_mappings:
+      ticker: "Ticker"
+      expected_return: "Expected Return"
+      sharpe_ratio: "Sharpe"
+      beta: "Beta"
+      volatility: "Volatility"
+      pe_ratio: "P/E"
+      dividend_yield: "Dividend Yield"
+    robots_policy:
+      status: "UNKNOWN"
+      last_checked: null
+      override_approved: false
+    metadata:
+      created: "2025-01-01T00:00:00Z"
+      created_by: "manual"
+      last_successful_extraction: null
+      requires_subscription: false
+      notes: "Risk/return dashboard for curated dental stocks (HSIC, XRAY, NVST, ALGN, etc.). Standard HTML table with some marketing JS."
     rate_limit: 2.0
 

@@ -196,118 +196,161 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 
 with tab1:
     st.subheader("Crypto Data Sources")
-    st.markdown("""
-    This tab provides access to cryptocurrency-related data sources including exchange volumes, 
-    market charts, staking statistics, and on-chain metrics.
-    """)
-    
-    # Filter crypto-related sites
-    crypto_keywords = ["theblock", "coingecko", "coinglass", "dune"]
-    crypto_sites = [
-        s for s in sites 
-        if any(keyword in s.get("id", "").lower() or keyword in s.get("name", "").lower() 
-               for keyword in crypto_keywords)
-    ]
-    # Sort: The Block sites first, then others alphabetically
-    theblock_sites = [s for s in crypto_sites if 'theblock' in s.get("id", "").lower()]
-    other_sites = [s for s in crypto_sites if 'theblock' not in s.get("id", "").lower()]
-    theblock_sites = sorted(theblock_sites, key=lambda x: x.get('name', '').lower())
-    other_sites = sorted(other_sites, key=lambda x: x.get('name', '').lower())
-    crypto_sites = theblock_sites + other_sites
-    
+
+    # Filter crypto-related sites (those with asset field)
+    crypto_sites = [s for s in sites if s.get("asset") is not None]
+
     if crypto_sites:
-        st.subheader("Available Crypto Data Sources")
-        
-        # Display sites in columns (card-based layout)
-        cols = st.columns(2)
-        scrape_results = {}
-        
-        for idx, site in enumerate(crypto_sites):
-            with cols[idx % 2]:
-                with st.container():
-                    # Remove "TOTAL3" from site name if present
-                    display_name = site['name'].replace(' (TOTAL3)', '').replace('TOTAL3', '')
+        # Get unique asset types from the sites
+        asset_types = list(set(s.get("asset", "general") for s in crypto_sites))
+        asset_types = sorted(asset_types)
+
+        # Asset display names
+        asset_labels = {
+            "all": "All Assets",
+            "bitcoin": "Bitcoin",
+            "ethereum": "Ethereum",
+            "both": "BTC & ETH",
+            "general": "General Crypto"
+        }
+
+        # Create two columns for dropdowns
+        col1, col2 = st.columns(2)
+
+        with col1:
+            # Asset selector
+            selected_asset = st.selectbox(
+                "Select Asset",
+                options=["all"] + asset_types,
+                format_func=lambda x: asset_labels.get(x, x.title()),
+                key="crypto_asset_select"
+            )
+
+        # Filter sites based on selected asset
+        if selected_asset == "all":
+            filtered_sites = crypto_sites
+        else:
+            filtered_sites = [s for s in crypto_sites if s.get("asset") == selected_asset]
+
+        # Sort filtered sites alphabetically
+        filtered_sites = sorted(filtered_sites, key=lambda x: x.get('name', '').lower())
+
+        with col2:
+            # Source selector (based on filtered sites)
+            if filtered_sites:
+                source_options = {s["id"]: s["name"].replace(' (TOTAL3)', '').replace('TOTAL3', '') for s in filtered_sites}
+                selected_source_id = st.selectbox(
+                    "Select Source",
+                    options=list(source_options.keys()),
+                    format_func=lambda x: source_options.get(x, x),
+                    key="crypto_source_select"
+                )
+            else:
+                selected_source_id = None
+                st.info("No sources available for selected asset.")
+
+        # Display selected source details and scrape button
+        if selected_source_id:
+            selected_site = next((s for s in filtered_sites if s["id"] == selected_source_id), None)
+
+            if selected_site:
+                st.markdown("---")
+
+                # Source info card
+                col_info, col_action = st.columns([3, 1])
+
+                with col_info:
+                    display_name = selected_site['name'].replace(' (TOTAL3)', '').replace('TOTAL3', '')
                     st.markdown(f"### {display_name}")
-                    # Get first line of description only
-                    description = site.get('metadata', {}).get('notes', 'No description')
+
+                    # Description
+                    description = selected_site.get('metadata', {}).get('notes', 'No description')
                     if description:
                         description = description.split('\n')[0].strip()
                     st.caption(description)
-                    st.markdown(f"[View Website →]({site['page_url']})")
-                    
-                    # Scrape button for this site
-                    site_id = site["id"]
-                    button_key = f"crypto_scrape_{site_id}"
-                    if st.button("Scrape", key=button_key, type="primary"):
-                        # Process scraping immediately
-                        with st.spinner(f"Scraping {site['name']}... This may take a moment."):
-                            progress_bar = st.progress(0)
-                            status_text = st.empty()
-                            
-                            status_text.text("Step 1/3: Loading site configuration...")
-                            progress_bar.progress(33)
-                            
-                            result = api.scrape_configured_site(
-                                site_id=site_id,
-                                use_stealth=True,
-                                override_robots=False,
-                            )
-                            
-                            progress_bar.progress(100)
-                            status_text.text("Complete!")
-                            scrape_results[site_id] = (result, site)
-                    
+
+                    # Asset badge and link
+                    asset_badge = asset_labels.get(selected_site.get("asset", "general"), "General")
+                    st.markdown(f"**Asset:** {asset_badge} · [View Source →]({selected_site['page_url']})")
+
+                with col_action:
+                    st.write("")  # Spacing
+                    scrape_clicked = st.button("Scrape Data", key="crypto_scrape_btn", type="primary", use_container_width=True)
+
+                # Handle scraping
+                if scrape_clicked:
+                    with st.spinner(f"Scraping {selected_site['name']}... This may take a moment."):
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+
+                        status_text.text("Loading site configuration...")
+                        progress_bar.progress(33)
+
+                        result = api.scrape_configured_site(
+                            site_id=selected_source_id,
+                            use_stealth=True,
+                            override_robots=False,
+                        )
+
+                        progress_bar.progress(100)
+                        status_text.text("Complete!")
+
+                        # Store result in session state
+                        st.session_state['crypto_result'] = result
+                        st.session_state['crypto_result_site'] = selected_site
+
+                # Display results if available
+                if 'crypto_result' in st.session_state and st.session_state.get('crypto_result_site', {}).get('id') == selected_source_id:
+                    result = st.session_state['crypto_result']
+                    site = st.session_state['crypto_result_site']
+
                     st.markdown("---")
-        
-        # Display results for any site that was scraped
-        for site_id, (result, site) in scrape_results.items():
-            if result["success"]:
-                st.success(f"Successfully extracted {result['rows']} rows of data from {site['name']}!")
-                
-                # Show warnings if any
-                if result["warnings"]:
-                    with st.expander("Validation Warnings", expanded=False):
-                        for warning in result["warnings"]:
-                            st.warning(warning)
-                
-                # Data preview (latest first)
-                st.subheader(f"Data Preview - {site['name']}")
-                preview_rows = st.slider("Rows to display:", 10, min(100, result["rows"]), 50, key=f"crypto_preview_{site_id}")
-                # Sort by date descending if date column exists (latest first)
-                preview_data = result["data"].copy()
-                # Check for common date column names
-                date_cols = [c for c in preview_data.columns if any(d in c.lower() for d in ['date', 'time', 'timestamp', 'datetime'])]
-                if date_cols:
-                    # Try to convert to datetime and sort
-                    try:
-                        preview_data[date_cols[0]] = pd.to_datetime(preview_data[date_cols[0]], errors='coerce')
-                        preview_data = preview_data.sort_values(date_cols[0], ascending=False, na_position='last')
-                    except:
-                        # If conversion fails, try sorting as-is
-                        preview_data = preview_data.sort_values(date_cols[0], ascending=False, na_position='last')
-                # Format large numbers as millions
-                display_data = format_dataframe_for_display(preview_data.head(preview_rows))
-                st.dataframe(display_data, width='stretch')
-                
-                # Download section
-                st.subheader("Download")
-                excel_bytes, filename = api.export_to_excel(result["data"], filename=f"{site_id}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}")
-                
-                if excel_bytes:
-                    st.download_button(
-                        label="Download Excel File",
-                        data=excel_bytes,
-                        file_name=filename,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary",
-                        key=f"crypto_download_{site_id}"
-                    )
-                    st.info(f"File size: {len(excel_bytes) / 1024:.2f} KB")
-                else:
-                    st.error("Failed to generate Excel file")
-            
-            else:
-                st.error(f"Scraping {site['name']} failed: {result['error']}")
+
+                    if result["success"]:
+                        st.success(f"Successfully extracted {result['rows']} rows of data!")
+
+                        # Show warnings if any
+                        if result["warnings"]:
+                            with st.expander("Validation Warnings", expanded=False):
+                                for warning in result["warnings"]:
+                                    st.warning(warning)
+
+                        # Data preview (latest first)
+                        st.subheader("Data Preview")
+                        preview_rows = st.slider("Rows to display:", 10, min(100, result["rows"]), 50, key="crypto_preview_slider")
+
+                        # Sort by date descending if date column exists (latest first)
+                        preview_data = result["data"].copy()
+                        date_cols = [c for c in preview_data.columns if any(d in c.lower() for d in ['date', 'time', 'timestamp', 'datetime'])]
+                        if date_cols:
+                            try:
+                                preview_data[date_cols[0]] = pd.to_datetime(preview_data[date_cols[0]], errors='coerce')
+                                preview_data = preview_data.sort_values(date_cols[0], ascending=False, na_position='last')
+                            except:
+                                preview_data = preview_data.sort_values(date_cols[0], ascending=False, na_position='last')
+
+                        # Format large numbers as millions
+                        display_data = format_dataframe_for_display(preview_data.head(preview_rows))
+                        st.dataframe(display_data, use_container_width=True)
+
+                        # Download section
+                        st.subheader("Download")
+                        excel_bytes, filename = api.export_to_excel(result["data"], filename=f"{selected_source_id}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}")
+
+                        if excel_bytes:
+                            st.download_button(
+                                label="Download Excel File",
+                                data=excel_bytes,
+                                file_name=filename,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                type="primary",
+                                key="crypto_download_btn"
+                            )
+                            st.info(f"File size: {len(excel_bytes) / 1024:.2f} KB")
+                        else:
+                            st.error("Failed to generate Excel file")
+                    else:
+                        st.error(f"Scraping failed: {result['error']}")
     else:
         st.info("No crypto data sources configured. Please add crypto sites to websites.yaml.")
 
