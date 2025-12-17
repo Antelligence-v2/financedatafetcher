@@ -197,15 +197,34 @@ def get_rss_client():
 rss_client = get_rss_client()
 
 # Main content
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "Crypto",
-    "Market Sentiment",
-    "Dental ETFs",
-    "Fintech News",
-    "Dev"
-])
+# NOTE: `st.tabs()` does not reliably persist the active tab across reruns (especially when `st.rerun()`
+# is called). This app triggers reruns frequently, so we use a stateful tab selector instead.
+TAB_OPTIONS = ["Crypto", "Market Sentiment", "Dental ETFs", "Fintech News", "Dev"]
 
-with tab1:
+# Optional: allow deep-linking to a tab via query params, while still preserving widget state.
+try:
+    _qp = st.query_params  # Streamlit >= 1.30
+    _qp_tab = _qp.get("tab")
+except Exception:
+    _qp_tab = None
+
+if "main_tab" not in st.session_state:
+    st.session_state.main_tab = _qp_tab if _qp_tab in TAB_OPTIONS else "Crypto"
+
+selected_tab = st.radio(
+    "Navigation",
+    options=TAB_OPTIONS,
+    horizontal=True,
+    key="main_tab",
+)
+
+# Keep query params in sync (best-effort; safe to ignore failures on older Streamlit).
+try:
+    st.query_params["tab"] = selected_tab
+except Exception:
+    pass
+
+if selected_tab == "Crypto":
     st.subheader("Crypto Data Sources")
 
     # Filter crypto-related sites (those with asset field)
@@ -365,7 +384,7 @@ with tab1:
     else:
         st.info("No crypto data sources configured. Please add crypto sites to websites.yaml.")
 
-with tab2:
+elif selected_tab == "Market Sentiment":
     st.header("Market Sentiment Indicators")
     st.markdown("17 indicators from FRED, University of Michigan, and DG ECFIN")
 
@@ -645,7 +664,7 @@ with tab2:
     else:
         st.info("No market sentiment indicators configured. Please add them to websites.yaml.")
 
-with tab3:
+elif selected_tab == "Dental ETFs":
     st.subheader("Dental ETFs Data Sources")
     st.markdown("""
     This tab provides access to dental-themed ETF and stock data from multiple sources.
@@ -855,7 +874,7 @@ with tab3:
     else:
         st.info("No dental ETF data sources configured. Please add them to websites.yaml with IDs starting with 'dental_'.")
 
-with tab4:
+elif selected_tab == "Fintech News":
     st.header("📰 Fintech News")
     st.markdown("Stay updated with the latest financial technology news and market insights.")
     
@@ -962,7 +981,7 @@ with tab4:
         else:
             st.info("Select news sources above to see headlines.")
 
-with tab5:
+elif selected_tab == "Dev":
     # Dev Tab: Data Normalization & Query Interface
     st.header("Dev: Data Normalization & Query")
     st.markdown("""
