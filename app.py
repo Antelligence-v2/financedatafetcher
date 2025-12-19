@@ -199,7 +199,7 @@ rss_client = get_rss_client()
 # Main content
 # NOTE: `st.tabs()` does not reliably persist the active tab across reruns (especially when `st.rerun()`
 # is called). This app triggers reruns frequently, so we use a stateful tab selector instead.
-TAB_OPTIONS = ["Crypto", "Market Sentiment", "Dental ETFs", "Fintech News"]
+TAB_OPTIONS = ["Crypto", "Market Sentiment", "Dental ETFs", "Fintech News", "Dev"]
 
 # Optional: allow deep-linking to a tab via query params, while still preserving widget state.
 try:
@@ -216,7 +216,6 @@ selected_tab = st.radio(
     options=TAB_OPTIONS,
     horizontal=True,
     key="main_tab",
-    label_visibility="collapsed",
 )
 
 # Keep query params in sync (best-effort; safe to ignore failures on older Streamlit).
@@ -876,7 +875,7 @@ elif selected_tab == "Dental ETFs":
         st.info("No dental ETF data sources configured. Please add them to websites.yaml with IDs starting with 'dental_'.")
 
 elif selected_tab == "Fintech News":
-    st.header("Fintech News")
+    st.header("📰 Fintech News")
     st.markdown("Stay updated with the latest financial technology news and market insights.")
     
     if not news_sources:
@@ -982,6 +981,712 @@ elif selected_tab == "Fintech News":
         else:
             st.info("Select news sources above to see headlines.")
 
+elif selected_tab == "Dev":
+    # Dev Tab: Data Normalization & Query Interface
+    st.header("Dev: Data Normalization & Query")
+    st.markdown("""
+    This tab allows you to:
+    1. Fetch data in real-time by selecting an asset and data categories
+    2. View normalized data with AI validation
+    3. Query data by asset and metrics
+    """)
 
+    st.subheader("Crypto Data Sources (Dev)")
+    st.markdown("Same per-source scrape UX as the Crypto tab, but grouped here for dev workflows.")
+    
+    # Prefer main-branch UX if sites have `asset` metadata; otherwise fallback to keyword filtering.
+    crypto_sites_by_asset = [s for s in sites if s.get("asset") is not None]
+
+    if crypto_sites_by_asset:
+        # main-style UX: asset dropdown + source dropdown + sticky results via session_state
+        asset_types = sorted(list(set(s.get("asset", "general") for s in crypto_sites_by_asset)))
+        asset_labels = {
+            "all": "All Assets",
+            "bitcoin": "Bitcoin",
+            "ethereum": "Ethereum",
+            "both": "BTC & ETH",
+            "general": "General Crypto",
+        }
+
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_asset = st.selectbox(
+                "Select Asset",
+                options=["all"] + asset_types,
+                format_func=lambda x: asset_labels.get(x, x.title()),
+                key="dev_crypto_asset_select",
+            )
+
+        if selected_asset == "all":
+            filtered_sites = crypto_sites_by_asset
+        else:
+            filtered_sites = [s for s in crypto_sites_by_asset if s.get("asset") == selected_asset]
+
+        filtered_sites = sorted(filtered_sites, key=lambda x: x.get("name", "").lower())
+
+        with col2:
+            if filtered_sites:
+                source_options = {
+                    s["id"]: s["name"].replace(" (TOTAL3)", "").replace("TOTAL3", "")
+                    for s in filtered_sites
+                }
+                selected_source_id = st.selectbox(
+                    "Select Source",
+                    options=list(source_options.keys()),
+                    format_func=lambda x: source_options.get(x, x),
+                    key="dev_crypto_source_select",
+                )
+            else:
+                selected_source_id = None
+                st.info("No sources available for selected asset.")
+
+        if selected_source_id:
+            selected_site = next((s for s in filtered_sites if s["id"] == selected_source_id), None)
+            if selected_site:
+                st.markdown("---")
+                col_info, col_action = st.columns([3, 1])
+                with col_info:
+                    display_name = selected_site["name"].replace(" (TOTAL3)", "").replace("TOTAL3", "")
+                    st.markdown(f"### {display_name}")
+                    description = selected_site.get("metadata", {}).get("notes", "No description")
+                    if description:
+                        description = description.split("\n")[0].strip()
+                    st.caption(description)
+                    asset_badge = asset_labels.get(selected_site.get("asset", "general"), "General")
+                    st.markdown(f"**Asset:** {asset_badge} · [View Source →]({selected_site['page_url']})")
+
+                with col_action:
+                    st.write("")
+                    scrape_clicked = st.button(
+                        "Scrape Data",
+                        key="dev_crypto_scrape_btn",
+                        type="primary",
+                        use_container_width=True,
+                    )
+
+                if scrape_clicked:
+                    with st.spinner(f"Scraping {selected_site['name']}... This may take a moment."):
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+
+                        status_text.text("Loading site configuration...")
+                        progress_bar.progress(33)
+
+                        result = api.scrape_configured_site(
+                            site_id=selected_source_id,
+                            use_stealth=True,
+                            override_robots=False,
+                        )
+
+                        progress_bar.progress(100)
+                        status_text.text("Complete!")
+
+                        st.session_state["dev_crypto_result"] = result
+                        st.session_state["dev_crypto_result_site"] = selected_site
+
+                if (
+                    "dev_crypto_result" in st.session_state
+                    and st.session_state.get("dev_crypto_result_site", {}).get("id") == selected_source_id
+                ):
+                    result = st.session_state["dev_crypto_result"]
+                    site = st.session_state["dev_crypto_result_site"]
+
+                    st.markdown("---")
+
+                    if result["success"]:
+                        st.success(f"Successfully extracted {result['rows']} rows of data!")
+                        if result["warnings"]:
+                            with st.expander("Validation Warnings", expanded=False):
+                                for warning in result["warnings"]:
+                                    st.warning(warning)
+
+                        st.subheader("Data Preview")
+                        preview_rows = st.slider(
+                            "Rows to display:",
+                            10,
+                            min(100, result["rows"]),
+                            50,
+                            key="dev_crypto_preview_slider",
+                        )
+
+                        preview_data = result["data"].copy()
+                        date_cols = [
+                            c
+                            for c in preview_data.columns
+                            if any(d in c.lower() for d in ["date", "time", "timestamp", "datetime"])
+                        ]
+                        if date_cols:
+                            try:
+                                preview_data[date_cols[0]] = pd.to_datetime(preview_data[date_cols[0]], errors="coerce")
+                                preview_data = preview_data.sort_values(date_cols[0], ascending=False, na_position="last")
+                            except Exception:
+                                preview_data = preview_data.sort_values(date_cols[0], ascending=False, na_position="last")
+
+                        display_data = format_dataframe_for_display(preview_data.head(preview_rows))
+                        st.dataframe(display_data, use_container_width=True)
+
+                        st.subheader("Download")
+                        excel_bytes, filename = api.export_to_excel(
+                            result["data"],
+                            filename=f"{selected_source_id}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}",
+                        )
+
+                        if excel_bytes:
+                            st.download_button(
+                                label="Download Excel File",
+                                data=excel_bytes,
+                                file_name=filename,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                type="primary",
+                                key="dev_crypto_download_btn",
+                            )
+                            st.info(f"File size: {len(excel_bytes) / 1024:.2f} KB")
+                        else:
+                            st.error("Failed to generate Excel file")
+                    else:
+                        st.error(f"Scraping failed: {result['error']}")
+    else:
+        # fallback UX: keyword-based list (older configs without `asset`)
+        crypto_keywords = ["theblock", "coingecko", "coinglass", "dune"]
+        crypto_sites = [
+            s
+            for s in sites
+            if any(
+                keyword in s.get("id", "").lower() or keyword in s.get("name", "").lower()
+                for keyword in crypto_keywords
+            )
+        ]
+        theblock_sites = [s for s in crypto_sites if "theblock" in s.get("id", "").lower()]
+        other_sites = [s for s in crypto_sites if "theblock" not in s.get("id", "").lower()]
+        theblock_sites = sorted(theblock_sites, key=lambda x: x.get("name", "").lower())
+        other_sites = sorted(other_sites, key=lambda x: x.get("name", "").lower())
+        crypto_sites = theblock_sites + other_sites
+
+        if crypto_sites:
+            cols = st.columns(2)
+            dev_crypto_scrape_results = {}
+
+            for idx, site in enumerate(crypto_sites):
+                with cols[idx % 2]:
+                    with st.container():
+                        display_name = site["name"].replace(" (TOTAL3)", "").replace("TOTAL3", "")
+                        st.markdown(f"### {display_name}")
+                        description = site.get("metadata", {}).get("notes", "No description")
+                        if description:
+                            description = description.split("\n")[0].strip()
+                        st.caption(description)
+                        st.markdown(f"[View Website →]({site['page_url']})")
+
+                        site_id = site["id"]
+                        button_key = f"dev_crypto_scrape_{site_id}"
+                        if st.button("Scrape", key=button_key, type="primary"):
+                            with st.spinner(f"Scraping {site['name']}... This may take a moment."):
+                                progress_bar = st.progress(0)
+                                status_text = st.empty()
+
+                                status_text.text("Step 1/3: Loading site configuration...")
+                                progress_bar.progress(33)
+
+                                result = api.scrape_configured_site(
+                                    site_id=site_id,
+                                    use_stealth=True,
+                                    override_robots=False,
+                                )
+
+                                progress_bar.progress(100)
+                                status_text.text("Complete!")
+                                dev_crypto_scrape_results[site_id] = (result, site)
+
+                        st.markdown("---")
+
+            for site_id, (result, site) in dev_crypto_scrape_results.items():
+                if result["success"]:
+                    st.success(f"Successfully extracted {result['rows']} rows of data from {site['name']}!")
+                    if result["warnings"]:
+                        with st.expander("Validation Warnings", expanded=False):
+                            for warning in result["warnings"]:
+                                st.warning(warning)
+
+                    st.subheader(f"Data Preview - {site['name']}")
+                    preview_rows = st.slider(
+                        "Rows to display:",
+                        10,
+                        min(100, result["rows"]),
+                        50,
+                        key=f"dev_crypto_preview_{site_id}",
+                    )
+                    preview_data = result["data"].copy()
+                    date_cols = [
+                        c
+                        for c in preview_data.columns
+                        if any(d in c.lower() for d in ["date", "time", "timestamp", "datetime"])
+                    ]
+                    if date_cols:
+                        try:
+                            preview_data[date_cols[0]] = pd.to_datetime(preview_data[date_cols[0]], errors="coerce")
+                            preview_data = preview_data.sort_values(date_cols[0], ascending=False, na_position="last")
+                        except Exception:
+                            preview_data = preview_data.sort_values(date_cols[0], ascending=False, na_position="last")
+
+                    display_data = format_dataframe_for_display(preview_data.head(preview_rows))
+                    st.dataframe(display_data, width="stretch")
+
+                    st.subheader("Download")
+                    excel_bytes, filename = api.export_to_excel(
+                        result["data"],
+                        filename=f"{site_id}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}",
+                    )
+
+                    if excel_bytes:
+                        st.download_button(
+                            label="Download Excel File",
+                            data=excel_bytes,
+                            file_name=filename,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            type="primary",
+                            key=f"dev_crypto_download_{site_id}",
+                        )
+                        st.info(f"File size: {len(excel_bytes) / 1024:.2f} KB")
+                    else:
+                        st.error("Failed to generate Excel file")
+                else:
+                    st.error(f"Scraping {site['name']} failed: {result['error']}")
+        else:
+            st.info("No crypto data sources configured. Please add crypto sites to websites.yaml.")
+    
+    # Check for OpenAI API key
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if not openai_key:
+        st.warning("⚠️ OpenAI API key not found. AI validation will be disabled. Set OPENAI_API_KEY in your .env file.")
+    
+    # Import required modules (warehouse and services are in data-fetch/src)
+    # Clear any cached src module to ensure we get the right one
+    if 'src' in sys.modules:
+        # Check if it's the wrong src (doesn't have warehouse)
+        if not hasattr(sys.modules['src'], 'warehouse'):
+            # Remove from cache to force re-import
+            del sys.modules['src']
+            # Also remove any submodules
+            modules_to_remove = [m for m in sys.modules.keys() if m.startswith('src.')]
+            for m in modules_to_remove:
+                del sys.modules[m]
+    
+    # Ensure data-fetch is first in path
+    data_fetch_path = Path(__file__).parent / "data-fetch"
+    if str(data_fetch_path) in sys.path:
+        sys.path.remove(str(data_fetch_path))
+    sys.path.insert(0, str(data_fetch_path))
+    
+    from src.warehouse import DataWarehouse
+    from src.services import (
+        DataFetcherService,
+        AssetMapper,
+        MetricCategoryMapper,
+        RealtimeNormalizer,
+    )
+    
+    # Initialize services (use session state to persist)
+    if 'warehouse' not in st.session_state:
+        st.session_state.warehouse = DataWarehouse()
+        st.session_state.fetcher = DataFetcherService(st.session_state.warehouse)
+        st.session_state.asset_mapper = AssetMapper()
+        st.session_state.metric_mapper = MetricCategoryMapper()
+        st.session_state.normalizer = RealtimeNormalizer(
+            warehouse=st.session_state.warehouse
+        )
+    
+    warehouse = st.session_state.warehouse
+    fetcher = st.session_state.fetcher
+    asset_mapper = st.session_state.asset_mapper
+    metric_mapper = st.session_state.metric_mapper
+    normalizer = st.session_state.normalizer
+    
+    # Section 1: Real-Time Data Fetching
+    st.subheader("1. Fetch & Normalize Data")
+    st.markdown("**What asset would you like to find data about?**")
+    
+    # Question 1: Asset Selection
+    available_assets_list = asset_mapper.get_available_assets()
+    if not available_assets_list:
+        available_assets_list = ['BTC', 'ETH', 'SOL', 'ALL']
+    
+    selected_asset_input = st.selectbox(
+        "Select Asset",
+        available_assets_list,
+        help="Select the cryptocurrency or asset you want data for",
+        key="fetch_asset"
+    )
+    
+    # Question 2: Metric Categories
+    st.markdown("**What data would you like?**")
+    available_categories = metric_mapper.get_available_categories()
+    
+    selected_categories = st.multiselect(
+        "Select Data Categories",
+        available_categories,
+        # Default to categories we know are emitted by current transformers for a clean first-run.
+        default=[c for c in ["volume", "trust"] if c in available_categories] or (
+            available_categories[:2] if len(available_categories) >= 2 else available_categories
+        ),
+        help="Select one or more categories of data to fetch",
+        key="fetch_categories"
+    )
+    
+    # Show category descriptions
+    if selected_categories:
+        with st.expander("Selected Categories", expanded=False):
+            for cat in selected_categories:
+                desc = metric_mapper.get_category_description(cat)
+                st.write(f"**{cat.capitalize()}**: {desc}")
+    
+    # Fetch Button
+    if st.button("🚀 Fetch Data", type="primary", key="fetch_button"):
+        if not selected_categories:
+            st.warning("Please select at least one data category.")
+        else:
+            with st.spinner("Fetching and normalizing data in real-time..."):
+                try:
+                    # Create progress indicators
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    status_text.text("Step 1/4: Scraping data sources...")
+                    progress_bar.progress(25)
+                    
+                    # Fetch and normalize
+                    result = normalizer.fetch_and_normalize(
+                        asset=selected_asset_input,
+                        categories=selected_categories
+                    )
+                    
+                    status_text.text("Step 2/4: Normalizing data...")
+                    progress_bar.progress(50)
+                    
+                    status_text.text("Step 3/4: Validating normalization...")
+                    progress_bar.progress(75)
+                    
+                    status_text.text("Step 4/4: Storing in warehouse...")
+                    progress_bar.progress(100)
+                    
+                    # Store result in session state
+                    st.session_state.normalization_result = result
+                    
+                    status_text.text("Complete!")
+                    
+                    if result.success:
+                        st.success(f"✅ Successfully fetched and normalized {result.points_added} data points!")
+                        st.info(f"Scraped from {len(result.sources_scraped)} sources: {', '.join(result.sources_scraped)}")
+                    else:
+                        st.error(f"❌ Normalization failed: {', '.join(result.errors[:3])}")
+                        st.rerun()
+                    
+                    # Show warnings if any
+                    if result.warnings:
+                        with st.expander("⚠️ Warnings", expanded=False):
+                            for warning in result.warnings[:10]:  # Limit to first 10
+                                st.warning(warning)
+                    
+                    # Show validation reports
+                    if result.validation_reports:
+                        with st.expander("🔍 Validation Reports", expanded=False):
+                            for source, report in result.validation_reports.items():
+                                st.markdown(f"**{source}**")
+                                if report.passed:
+                                    st.success(f"✅ Validation passed ({report.normalized_metric_count} metrics from {report.raw_field_count} fields)")
+                                else:
+                                    st.error(f"❌ Validation failed")
+                                    for error in report.errors:
+                                        st.error(f"  - {error}")
+                                if report.warnings:
+                                    for warning in report.warnings:
+                                        st.warning(f"  ⚠️ {warning}")
+                                st.markdown("---")
+                    
+                    st.rerun()
+                
+                except Exception as e:
+                    st.error(f"Error fetching data: {str(e)}")
+                    import traceback
+                    with st.expander("Error Details"):
+                        st.code(traceback.format_exc())
+    
+    # Display fetched data if available
+    if 'normalization_result' in st.session_state:
+        result = st.session_state.normalization_result
+        if result.success and result.points_added > 0:
+            st.divider()
+            st.subheader("2. Fetched Data")
+            
+            # Get the normalized data from warehouse
+            normalized_df = warehouse.get_dataframe()
+            
+            if not normalized_df.empty:
+                # Filter to show only recently fetched data (last fetch)
+                # We'll show all data in warehouse for now, but could filter by timestamp if needed
+                display_df = normalized_df.copy()
+                
+                # Format timestamp columns for display
+                if 'timestamp' in display_df.columns:
+                    display_df['timestamp'] = pd.to_datetime(display_df['timestamp']).dt.strftime('%Y-%m-%d %H:%M:%S')
+                if 'date' in display_df.columns:
+                    display_df['date'] = pd.to_datetime(display_df['date']).dt.strftime('%Y-%m-%d')
+                
+                # Format large numbers
+                display_df = format_dataframe_for_display(display_df)
+                
+                # Show summary
+                st.markdown(f"**Total Data Points:** {len(display_df)}")
+                st.markdown(f"**Sources:** {', '.join(display_df['source'].unique()) if 'source' in display_df.columns else 'N/A'}")
+                st.markdown(f"**Assets:** {', '.join(display_df['asset'].unique()) if 'asset' in display_df.columns else 'N/A'}")
+                
+                # Display data table
+                st.markdown("**Data Preview:**")
+                st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
+                
+                # Download button
+                asset_name = result.asset if hasattr(result, 'asset') else 'unknown'
+                excel_bytes, filename = api.export_to_excel(
+                    normalized_df,  # Use original dataframe for export
+                    filename=f"fetched_data_{asset_name}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}"
+                )
+                
+                if excel_bytes:
+                    st.download_button(
+                        label="📥 Download Fetched Data (Excel)",
+                        data=excel_bytes,
+                        file_name=filename,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="download_fetched_data",
+                        type="primary"
+                    )
+                
+                # Link to Data Inventory
+                st.markdown("---")
+                st.markdown("**Want to query this data?** [Open Data Inventory →](#data-inventory)")
+            else:
+                st.info("No data available to display.")
+    
+    st.divider()
+    
+    # Section 3: Data Inventory Link
+    st.subheader("3. Data Inventory & Query")
+    st.markdown("""
+    Use the Data Inventory to explore and query your fetched data with advanced filters:
+    - Filter by date ranges
+    - Filter by source types
+    - Query specific assets and metrics
+    """)
+    
+    # Create a link/button to open data inventory
+    if st.button("🔍 Open Data Inventory", key="open_inventory"):
+        st.session_state.show_inventory = True
+        st.rerun()
+    
+    # Show Data Inventory if requested
+    if st.session_state.get('show_inventory', False):
+        st.divider()
+        st.subheader("📊 Data Inventory & Query")
+        
+        stats = warehouse.get_stats()
+        if stats['total_points'] > 0:
+            # Summary Statistics
+            st.markdown("### Summary Statistics")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Data Points", stats['total_points'])
+            with col2:
+                st.metric("Sources", len(stats['sources']))
+            with col3:
+                st.metric("Assets", len(stats['assets']))
+            
+            st.divider()
+            
+            # Query Interface
+            st.markdown("### Query Data")
+            
+            # Asset selector
+            available_assets = fetcher.get_available_assets()
+            selected_asset = st.selectbox(
+                "Select Asset",
+                available_assets if available_assets else ["ALL"],
+                key="inventory_query_asset"
+            )
+            
+            # Metric selector (multi-select)
+            available_metrics = fetcher.get_available_metrics(selected_asset)
+            if not available_metrics:
+                available_metrics = fetcher.get_available_metrics()
+            
+            selected_metrics = st.multiselect(
+                "Select Metrics",
+                available_metrics,
+                default=available_metrics[:3] if len(available_metrics) >= 3 else available_metrics,
+                key="inventory_query_metrics"
+            )
+            
+            # Date range filter
+            col1, col2 = st.columns(2)
+            with col1:
+                use_date_range = st.checkbox("Filter by date range", key="inventory_use_date_range")
+            with col2:
+                if use_date_range:
+                    coverage = fetcher.get_data_coverage(selected_asset)
+                    if coverage['date_range']:
+                        min_date = coverage['date_range'][0].date()
+                        max_date = coverage['date_range'][1].date()
+                        date_range = st.date_input(
+                            "Date Range",
+                            value=(min_date, max_date),
+                            min_value=min_date,
+                            max_value=max_date,
+                            key="inventory_query_date_range"
+                        )
+                    else:
+                        date_range = None
+                else:
+                    date_range = None
+            
+            # Source filter
+            available_sources = warehouse.get_available_sources()
+            selected_sources = st.multiselect(
+                "Filter by Sources (optional)",
+                available_sources,
+                key="inventory_query_sources"
+            )
+            
+            # Aggregation method
+            aggregation = st.selectbox(
+                "Multi-source Aggregation",
+                ["latest", "average", "sum", "all"],
+                index=0,
+                help="How to handle metrics from multiple sources: latest=use most recent, average=mean, sum=total, all=show breakdown",
+                key="inventory_query_aggregation"
+            )
+            
+            # Query button
+            if st.button("🔍 Query Data", type="primary", key="inventory_query_button"):
+                if not selected_metrics:
+                    st.warning("Please select at least one metric.")
+                else:
+                    with st.spinner("Fetching data..."):
+                        try:
+                            # Prepare date range
+                            query_date_range = None
+                            if use_date_range and date_range and len(date_range) == 2:
+                                query_date_range = (date_range[0], date_range[1])
+                            
+                            # Prepare sources
+                            query_sources = selected_sources if selected_sources else None
+                            
+                            # Fetch data
+                            result = fetcher.fetch_data(
+                                asset=selected_asset,
+                                metrics=selected_metrics,
+                                date_range=query_date_range,
+                                sources=query_sources,
+                                aggregation=aggregation
+                            )
+                            
+                            st.session_state.inventory_query_result = result
+                            st.success("✅ Data fetched successfully!")
+                            
+                        except Exception as e:
+                            st.error(f"Error fetching data: {str(e)}")
+                            import traceback
+                            st.code(traceback.format_exc())
+            
+            # Display query results
+            if 'inventory_query_result' in st.session_state:
+                result = st.session_state.inventory_query_result
+                st.divider()
+                st.markdown("### Query Results")
+                
+                # Metadata
+                metadata = result['metadata']
+                st.markdown("**Query Info:**")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.write(f"**Asset:** {metadata['asset']}")
+                with col2:
+                    st.write(f"**Metrics:** {len(metadata['metrics'])}")
+                with col3:
+                    st.write(f"**Sources:** {', '.join(metadata['sources_used']) if metadata['sources_used'] else 'None'}")
+                
+                if metadata['warnings']:
+                    for warning in metadata['warnings']:
+                        st.info(f"ℹ️ {warning}")
+                
+                # Data display
+                data_df = result['data']
+                
+                if not data_df.empty:
+                    # Chart
+                    st.markdown("**Time-Series Chart**")
+                    
+                    # Prepare data for chart
+                    chart_df = data_df.copy()
+                    chart_df = chart_df.sort_values('timestamp', ascending=True)
+                    
+                    # Create Plotly figure
+                    fig = go.Figure()
+                    
+                    # Add trace for each metric
+                    for metric in selected_metrics:
+                        if metric in chart_df.columns:
+                            fig.add_trace(go.Scatter(
+                                x=chart_df['timestamp'],
+                                y=chart_df[metric],
+                                mode='lines+markers',
+                                name=metric,
+                                line=dict(width=2)
+                            ))
+                    
+                    fig.update_layout(
+                        title="Time-Series Data",
+                        xaxis_title="Timestamp",
+                        yaxis_title="Value",
+                        hovermode='x unified',
+                        height=400
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Data table
+                    st.markdown("**Data Table**")
+                    display_df = data_df.copy()
+                    # Format timestamp for display
+                    if 'timestamp' in display_df.columns:
+                        display_df['timestamp'] = pd.to_datetime(display_df['timestamp']).dt.strftime('%Y-%m-%d %H:%M:%S')
+                    if 'date' in display_df.columns:
+                        display_df['date'] = pd.to_datetime(display_df['date']).dt.strftime('%Y-%m-%d')
+                    
+                    # Format large numbers
+                    display_df = format_dataframe_for_display(display_df)
+                    
+                    st.dataframe(display_df, use_container_width=True, hide_index=True)
+                    
+                    # Download button
+                    excel_bytes, filename = api.export_to_excel(
+                        data_df,
+                        filename=f"inventory_query_{selected_asset}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}"
+                    )
+                    
+                    if excel_bytes:
+                        st.download_button(
+                            label="📥 Download Query Results (Excel)",
+                            data=excel_bytes,
+                            file_name=filename,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="download_inventory_results"
+                        )
+                else:
+                    st.warning("No data returned for this query.")
+        else:
+            st.info("No data loaded yet. Fetch some data first using the form above.")
+        
+        # Close button
+        if st.button("← Back to Main", key="close_inventory"):
+            st.session_state.show_inventory = False
+            st.rerun()
 
 
